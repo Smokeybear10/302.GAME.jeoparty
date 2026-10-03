@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f7f8fa">
+    <meta name="description" content="Learn a little every day with mixed trivia, hints, and explanations. Save the questions you want to review.">
+    <title>Trivia practice</title>
+    <link rel="stylesheet" href="/practice.css">
+    <script src="/practice-data.js" defer></script>
+    <script src="/practice-state.js" defer></script>
+    <script src="/practice.js" defer></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="Jeopardy home">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M2 3h5v7H2zm7.5 0h5v7h-5zM17 3h5v7h-5zM2 12h5v9H2zm7.5 0h5v9h-5zM17 12h5v9h-5z"/></svg>
+        Jeopardy!
+      </a>
+      <nav aria-label="Main navigation">
+        <a href="/">Multiplayer</a>
+        <a href="/practice" aria-current="page">Practice</a>
+      </nav>
+    </header>
+    <main class="practice-shell">
+      <header class="page-heading">
+        <div><h1>Practice</h1><p>A question at a time. Take as long as you need.</p></div>
+        <dl class="progress-counts" aria-label="Your progress">
+          <div><dt>Studied</dt><dd id="studied-count">0</dd></div>
+          <div><dt>To review</dt><dd id="review-count">0</dd></div>
+        </dl>
+      </header>
+      <div class="practice-layout">
+        <aside class="practice-options" aria-label="Practice settings">
+          <details class="topic-filters" id="topic-filters" open>
+            <summary>Include topics <span id="topic-selection-count">All 8</span></summary>
+            <fieldset>
+              <legend class="sr-only">Include topics</legend>
+              <div class="topic-shortcuts"><button type="button" id="select-all">All</button><span aria-hidden="true">/</span><button type="button" id="select-none">None</button></div>
+              <div id="topic-options"></div>
+            </fieldset>
+          </details>
+          <label class="review-toggle"><input type="checkbox" id="review-only"><span>Only questions to review</span></label>
+          <p class="save-note" id="save-note">Progress saves in this browser.</p>
+        </aside>
+        <section class="question-area" id="question-area" aria-label="Practice question">
+          <p>Loading questions…</p>
+          <noscript>Enable JavaScript to practice and save your progress.</noscript>
+        </section>
+      </div>
+      <p id="practice-status" class="sr-only" role="status" aria-live="polite"></p>
+    </main>
+  </body>
+</html>

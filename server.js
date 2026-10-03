@@ -28,6 +28,10 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console }
     response.json({ urls: localNetworkUrls(request.socket.localPort) });
   });
   app.get('/api/games', (_request, response) => response.json(gameCatalog));
+  app.get(['/practice', '/practice/'], (_request, response) => response.sendFile(path.join(ROOT, 'practice.html')));
+  for (const asset of ['practice.css', 'practice-data.js', 'practice-state.js', 'practice.js']) {
+    app.get(`/${asset}`, (_request, response) => response.sendFile(path.join(ROOT, asset)));
+  }
   app.get(['/', '/index.html'], (_request, response) => response.sendFile(path.join(ROOT, 'index.html')));
   app.get('/app.js', (_request, response) => response.sendFile(path.join(ROOT, 'app.js')));
   app.get('/style.css', (_request, response) => response.sendFile(path.join(ROOT, 'style.css')));
