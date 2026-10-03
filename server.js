@@ -5,12 +5,12 @@ const os = require('node:os');
 const path = require('node:path');
 const express = require('express');
 const { Server } = require('socket.io');
-const { catalogGames, loadGames } = require('./lib/game-store');
+const { catalogGames, loadPreferredGames } = require('./lib/game-store');
 const { RoomError, RoomManager } = require('./lib/room-manager');
 
 const ROOT = __dirname;
 
-function createJeopardyServer({ games = loadGames(), logger = console } = {}) {
+function createJeopardyServer({ games = loadPreferredGames(), logger = console } = {}) {
   const app = express();
   const httpServer = http.createServer(app);
   const io = new Server(httpServer, {
@@ -31,6 +31,7 @@ function createJeopardyServer({ games = loadGames(), logger = console } = {}) {
   app.get(['/', '/index.html'], (_request, response) => response.sendFile(path.join(ROOT, 'index.html')));
   app.get('/app.js', (_request, response) => response.sendFile(path.join(ROOT, 'app.js')));
   app.get('/style.css', (_request, response) => response.sendFile(path.join(ROOT, 'style.css')));
+  app.get('/ui.css', (_request, response) => response.sendFile(path.join(ROOT, 'ui.css')));
   app.get('/favicon.ico', (_request, response) => response.status(204).end());
   app.use((_request, response) => response.status(404).json({ error: 'Not found' }));
 
@@ -65,7 +66,7 @@ function createJeopardyServer({ games = loadGames(), logger = console } = {}) {
         const result = mutate(payload);
         const code = typeof result === 'string' ? result : result?.code;
         await broadcastRoom(code);
-        if (typeof acknowledge === 'function') acknowledge({ ok: true });
+        if (typeof acknowledge === 'function') acknowledge({ ok: true, result });
       } catch (error) {
         sendError(socket, error, acknowledge);
       }
@@ -142,26 +143,33 @@ function createJeopardyServer({ games = loadGames(), logger = console } = {}) {
       }
     });
 
+    registerMutation(socket, 'host:join-contestants', (payload) => rooms.joinHostAsPlayer(socket.id, payload));
+    registerMutation(socket, 'host:leave-contestants', () => rooms.leaveHostAsPlayer(socket.id));
     registerMutation(socket, 'host:start-game', ({ gameId }) => rooms.startGame(socket.id, gameId));
-    registerMutation(socket, 'host:join-as-player', ({ name }) => rooms.joinHostAsPlayer(socket.id, { name }));
-    registerMutation(socket, 'host:leave-as-player', () => rooms.leaveHostAsPlayer(socket.id));
+    registerMutation(socket, 'host:create-custom-game', ({ game }) => rooms.createCustomGame(socket.id, game));
     registerMutation(socket, 'host:open-clue', (payload) => rooms.openClue(socket.id, payload));
     registerMutation(socket, 'host:set-daily-double', (payload) => rooms.setDailyDouble(socket.id, payload));
     registerMutation(socket, 'host:reset-buzzers', () => rooms.resetBuzzers(socket.id));
-    registerMutation(socket, 'host:open-answer-key', () => rooms.openAnswerKey(socket.id));
     registerMutation(socket, 'host:reveal-answer', () => rooms.revealAnswer(socket.id));
-    registerMutation(socket, 'host:score-clue', (payload) => rooms.scoreClue(socket.id, payload));
     registerMutation(socket, 'host:skip-clue', () => rooms.skipClue(socket.id));
+    registerMutation(socket, 'host:cancel-clue', () => rooms.cancelClue(socket.id));
     registerMutation(socket, 'host:adjust-score', (payload) => rooms.adjustScore(socket.id, payload));
     registerMutation(socket, 'host:reset-game', () => rooms.resetGame(socket.id));
     registerMutation(socket, 'host:return-lobby', () => rooms.returnToLobby(socket.id));
     registerMutation(socket, 'host:start-final', () => rooms.startFinal(socket.id));
-    registerMutation(socket, 'host:advance-final', ({ phase }) => rooms.advanceFinal(socket.id, phase));
-    registerMutation(socket, 'host:score-final', (payload) => rooms.scoreFinal(socket.id, payload));
+    registerMutation(socket, 'host:advance-final', ({ phase, expectedPhase, force }) => rooms.advanceFinal(socket.id, {
+      expectedPhase: expectedPhase ?? phase,
+      force,
+    }));
     registerMutation(socket, 'host:finish-final', () => rooms.finishFinal(socket.id));
     registerMutation(socket, 'player:buzz', () => rooms.buzz(socket.id));
+    registerMutation(socket, 'player:open-clue', (payload) => rooms.openClue(socket.id, payload));
+    registerMutation(socket, 'player:open-answer', (payload) => rooms.openPlayerAnswer(socket.id, payload));
+    registerMutation(socket, 'player:self-score-clue', (payload) => rooms.selfScoreClue(socket.id, payload));
+    registerMutation(socket, 'player:skip-clue', (payload) => rooms.skipPlayerClue(socket.id, payload));
     registerMutation(socket, 'player:final-wager', ({ wager }) => rooms.submitFinalWager(socket.id, wager));
     registerMutation(socket, 'player:final-response', ({ response }) => rooms.submitFinalResponse(socket.id, response));
+    registerMutation(socket, 'player:self-score-final', (payload) => rooms.selfScoreFinal(socket.id, payload));
 
     socket.on('host:remove-player', async ({ playerId } = {}, acknowledge) => {
       try {
