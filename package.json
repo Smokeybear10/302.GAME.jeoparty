@@ -7,8 +7,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
+    "fetch:archive": "node scripts/fetch-howard-archive.js",
     "test": "node --test",
-    "check": "node --check server.js && node --check lib/game-store.js && node --check lib/room-manager.js && node --check app.js"
+    "check": "node --check server.js && node --check lib/game-store.js && node --check lib/howard-archive.js && node --check lib/room-manager.js && node --check app.js"
   },
   "engines": {
     "node": ">=20"
