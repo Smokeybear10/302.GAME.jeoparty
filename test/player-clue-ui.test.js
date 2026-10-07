@@ -124,7 +124,7 @@ test('private answers and scoring actions render only for the active player', ()
   const result = renderClue(privateClue);
   assertInactive(result);
   assert.match(result.html, /109 yards/);
-  assert.match(result.html, /only on your screen/);
+  assert.match(result.html, /aria-labelledby="private-answer-label"/);
   assert.match(result.html, /data-action="self-score-clue" data-correct="true"/);
   assert.match(result.html, /data-action="self-score-clue" data-correct="false"/);
 

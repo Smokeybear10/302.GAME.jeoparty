@@ -25,6 +25,7 @@ function eventTarget() {
 }
 
 function element() {
+  const classes = new Set();
   return {
     ...eventTarget(),
     innerHTML: '',
@@ -33,7 +34,17 @@ function element() {
     disabled: false,
     hidden: false,
     dataset: {},
-    classList: { add() {}, remove() {}, toggle() {} },
+    classList: {
+      add: (...tokens) => tokens.forEach((token) => classes.add(token)),
+      remove: (...tokens) => tokens.forEach((token) => classes.delete(token)),
+      contains: (token) => classes.has(token),
+      toggle(token, force) {
+        const enabled = force ?? !classes.has(token);
+        if (enabled) classes.add(token);
+        else classes.delete(token);
+        return enabled;
+      },
+    },
     querySelector: () => null,
     querySelectorAll: () => [],
     contains: () => false,
@@ -51,7 +62,7 @@ function storage() {
   };
 }
 
-function startClient(fetchResponse = () => new Promise(() => {}), { connectImmediately = true } = {}) {
+function startClient(fetchResponse = () => new Promise(() => {}), { connectImmediately = true, search = '' } = {}) {
   const nodes = new Map();
   const operations = [];
   const scrollPositions = [];
@@ -77,7 +88,7 @@ function startClient(fetchResponse = () => new Promise(() => {}), { connectImmed
   const context = vm.createContext({
     document,
     window: {
-      location: { origin: 'http://127.0.0.1:3000', hostname: '127.0.0.1', search: '' },
+      location: { origin: 'http://127.0.0.1:3000', hostname: '127.0.0.1', search },
       scrollTo: (x, y) => scrollPositions.push([x, y]),
     },
     io: () => socket,
@@ -111,14 +122,129 @@ test('multiplayer connects before pending archive and network metadata requests'
 
 test('connection status distinguishes first connection from reconnecting', () => {
   const client = startClient(undefined, { connectImmediately: false });
-  assert.equal(client.node('#connection-label').textContent, 'Connecting to game server…');
-  assert.match(client.node('#room-connection-pill').innerHTML, /Connecting/);
+  assert.equal(client.node('#connection-label').textContent, 'Connecting…');
+  assert.equal(client.node('#join-room-button').disabled, true);
   client.emit('connect');
-  assert.equal(client.node('#connection-label').textContent, 'Game server connected');
+  assert.equal(client.node('#connection-label').textContent, '');
+  assert.equal(client.node('#join-room-button').disabled, false);
   client.emit('disconnect');
-  assert.equal(client.node('#connection-label').textContent, 'Connection lost — trying to reconnect…');
-  assert.match(client.node('#room-connection-pill').innerHTML, /Reconnecting/);
+  assert.equal(client.node('#connection-label').textContent, 'Connection lost. Reconnecting…');
+  assert.equal(client.node('#join-room-button').disabled, true);
 });
+
+test('opening an invite sanitizes and prefills its room code and presents the join screen', () => {
+  const client = startClient(undefined, { search: '?room=%20a-bc1d9!' });
+  assert.equal(client.node('#join-code').value, 'ABC1D');
+  assert.equal(client.node('#landing-title').textContent, 'Join game');
+  assert.equal(client.node('#invite-intro').hidden, false);
+  assert.equal(client.node('#landing-screen').classList.contains('is-invite'), true);
+  assert.equal(client.node('#join-room-button').disabled, false);
+});
+
+test('ordinary visits and empty sanitized invite codes keep the full game lobby', () => {
+  for (const search of ['', '?room=%3C%3E%20']) {
+    const client = startClient(undefined, { search });
+    assert.equal(client.node('#join-code').value, '');
+    assert.equal(client.node('#landing-title').textContent, 'Game lobby');
+    assert.equal(client.node('#invite-intro').hidden, true);
+    assert.equal(client.node('#landing-screen').classList.contains('is-invite'), false);
+  }
+});
+
+test('the host lobby displays the LAN invite with its room code', () => {
+  const client = startClient();
+  const games = loadGames();
+  const manager = new RoomManager({ games });
+  const session = manager.createRoom('creator');
+  client.evaluate("networkUrls = ['http://localhost:3000', 'http://192.168.1.10:3000'];");
+  client.emit('room:state', manager.stateFor('creator', catalogGames(games)));
+  assert.ok(client.node('#room-content').innerHTML.includes(`<code>192.168.1.10:3000/?room=${session.code}</code>`));
+});
+
+test('public HTTPS invites use the website address without same-Wi-Fi instructions', () => {
+  const client = startClient();
+  client.evaluate(`
+    window.location = { protocol: 'https:', hostname: 'jeopardy.example', origin: 'https://jeopardy.example' };
+    networkUrls = ['http://localhost:10000', 'http://10.0.0.1:10000'];
+    renderPublicLobby();
+  `);
+  assert.equal(client.node('#landing-network-address').textContent, 'jeopardy.example');
+  assert.equal(client.node('#landing-network-help').textContent, 'Share this address with your players:');
+  const games = loadGames();
+  const manager = new RoomManager({ games });
+  const session = manager.createRoom('creator');
+  client.emit('room:state', manager.stateFor('creator', catalogGames(games)));
+  const lobby = client.node('#room-content').innerHTML;
+  assert.ok(lobby.includes(`<code>jeopardy.example/?room=${session.code}</code>`));
+  assert.ok(!lobby.includes('same Wi-Fi'));
+});
+
+test('invites replace IPv6 localhost with the LAN address and preserve an existing LAN origin', () => {
+  const client = startClient();
+  client.evaluate(`
+    roomState = { code: 'ABCDE' };
+    networkUrls = ['http://localhost:3000', 'http://192.168.1.10:3000'];
+    window.location.hostname = '[::1]';
+    window.location.origin = 'http://[::1]:3000';
+  `);
+  assert.equal(client.evaluate('inviteUrl()'), 'http://192.168.1.10:3000/?room=ABCDE');
+  client.evaluate(`
+    window.location.hostname = '10.0.0.20';
+    window.location.origin = 'http://10.0.0.20:3000';
+  `);
+  assert.equal(client.evaluate('inviteUrl()'), 'http://10.0.0.20:3000/?room=ABCDE');
+});
+
+test('copying an invite reports success after the Clipboard API writes the link', async () => {
+  const client = startClient();
+  client.evaluate(`
+    roomState = { code: 'ABCDE' };
+    let clipboardValue;
+    let copyNotice;
+    globalThis.navigator = { clipboard: { async writeText(value) { clipboardValue = value; } } };
+    showToast = (...args) => { copyNotice = args; };
+  `);
+  await client.evaluate('copyInvite()');
+  assert.equal(client.evaluate('clipboardValue'), 'http://127.0.0.1:3000/?room=ABCDE');
+  assert.equal(client.evaluate('copyNotice[1]'), 'success');
+});
+
+for (const outcome of ['success', 'false', 'throw']) {
+  test(`legacy invite copying handles ${outcome}, removes its textarea, and restores focus`, async () => {
+    const client = startClient();
+    client.evaluate(`
+      roomState = { code: 'ABCDE' };
+      globalThis.navigator = {};
+      let copyTextarea;
+      let copyNotice;
+      let copyPrompt;
+      let restoredFocus = 0;
+      document.activeElement = { focus() { restoredFocus += 1; } };
+      document.createElement = () => (copyTextarea = {
+        style: {}, focus() {}, select() {}, remove() { this.removed = true; },
+      });
+      document.body.appendChild = () => {};
+      document.execCommand = () => {
+        if (${JSON.stringify(outcome)} === 'throw') throw new Error('Copy is blocked');
+        return ${JSON.stringify(outcome)} === 'success';
+      };
+      window.prompt = (...args) => { copyPrompt = args; return null; };
+      showToast = (...args) => { copyNotice = args; };
+    `);
+    await client.evaluate('copyInvite()');
+    assert.equal(client.evaluate('copyTextarea.removed'), true);
+    assert.equal(client.evaluate('restoredFocus'), 1);
+    if (outcome === 'success') {
+      assert.equal(client.evaluate('copyNotice[1]'), 'success');
+      assert.equal(client.evaluate('copyPrompt'), undefined);
+    } else {
+      assert.equal(client.evaluate('copyNotice'), undefined);
+      assert.deepEqual(JSON.parse(client.evaluate('JSON.stringify(copyPrompt)')), [
+        'Copy this player link:', 'http://127.0.0.1:3000/?room=ABCDE',
+      ]);
+    }
+  });
+}
 
 test('room resume restores the selected episode without sending UI preferences to the server', async () => {
   const client = startClient();
@@ -364,12 +490,12 @@ test('creator can opt in, buzz privately, and transfer the playable board to a r
   assert.match(render(), /Check my response/);
   const clueKey = manager.stateFor('creator', []).currentClue.clueKey;
   manager.openPlayerAnswer('creator', { clueKey });
-  assert.match(render(), /Official response · only on your screen/);
+  assert.match(render(), /aria-labelledby="private-answer-label"/);
   assert.match(render(), /data-action="self-score-clue"/);
   manager.selfScoreClue('creator', { clueKey, correct: false });
   manager.buzz('remote');
   manager.openPlayerAnswer('remote', { clueKey });
-  assert.doesNotMatch(render(), /Official response · only on your screen/);
+  assert.doesNotMatch(render(), /aria-labelledby="private-answer-label"/);
   manager.selfScoreClue('remote', { clueKey, correct: true });
   assert.match(render(), /Maya picks next/);
   const remoteBoard = render('remote');
@@ -394,7 +520,7 @@ test('creator can enter Daily Double and Final wagers, responses, and self-judgm
   assert.match(render(), /id="daily-wager-form"/);
   const creatorId = manager.stateFor('creator', []).you.id;
   manager.setDailyDouble('creator', { playerId: creatorId, wager: 500 });
-  assert.match(render(), /This one is yours/);
+  assert.match(render(), /data-action="open-player-answer"/);
   const clueKey = manager.stateFor('creator', []).currentClue.clueKey;
   manager.openPlayerAnswer('creator', { clueKey });
   manager.selfScoreClue('creator', { clueKey, correct: true });
