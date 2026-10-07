@@ -1,9 +1,13 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const zlib = require('node:zlib');
 const test = require('node:test');
 const { gameFromEpisode, gamesFromHowardArchive } = require('../lib/howard-archive');
-const { validateGame } = require('../lib/game-store');
+const { loadGames, loadPreferredGames, validateGame } = require('../lib/game-store');
 
 function completeEpisode(epNum = '123') {
   const jeopardy = [];
@@ -55,4 +59,47 @@ test('skips incomplete episodes and respects the requested library limit', () =>
   const games = gamesFromHowardArchive(archive, { limit: 1 });
   assert.equal(games.length, 1);
   assert.equal(games[0].id, 'archive-3');
+});
+
+test('prepared archive replaces raw parsing and preserves all boards or the requested limit', (context) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'jeopardy-prepared-'));
+  context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const archivePath = path.join(directory, 'howard-jeopardy.json.gz');
+  const preparedArchivePath = path.join(directory, 'howard-playable.json');
+  const games = gamesFromHowardArchive({
+    first: completeEpisode('2'),
+    second: { ...completeEpisode('3'), airDate: '2025-02-01' },
+  }, { limit: 0 });
+  fs.writeFileSync(archivePath, 'raw archive must not be parsed');
+  fs.writeFileSync(preparedArchivePath, JSON.stringify(games));
+
+  assert.deepEqual(loadPreferredGames({ archivePath, archiveLimit: 0 }), games);
+  assert.deepEqual(loadPreferredGames({ archivePath, archiveLimit: 1 }), [games[0]]);
+  assert.deepEqual(loadPreferredGames({ archivePath, archiveLimit: -1 }), games);
+  fs.unlinkSync(archivePath);
+  assert.deepEqual(loadPreferredGames({ archivePath, archiveLimit: 0 }), games);
+});
+
+test('an unprepared archive keeps the raw loader and missing archives keep the bundled bank', (context) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'jeopardy-raw-'));
+  context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const archivePath = path.join(directory, 'howard-jeopardy.json.gz');
+  const archive = { first: completeEpisode('2') };
+  fs.writeFileSync(archivePath, zlib.gzipSync(JSON.stringify(archive)));
+
+  assert.deepEqual(loadPreferredGames({ archivePath }), gamesFromHowardArchive(archive));
+  fs.unlinkSync(archivePath);
+  assert.deepEqual(loadPreferredGames({ archivePath }), loadGames());
+});
+
+test('an invalid prepared bank fails startup instead of serving an empty archive', (context) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'jeopardy-invalid-prepared-'));
+  context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const archivePath = path.join(directory, 'howard-jeopardy.json.gz');
+  const preparedArchivePath = path.join(directory, 'howard-playable.json');
+
+  for (const invalid of [[], {}]) {
+    fs.writeFileSync(preparedArchivePath, JSON.stringify(invalid));
+    assert.throws(() => loadPreferredGames({ archivePath }), /Prepared archive must contain playable games/);
+  }
 });

@@ -3,3 +3,5 @@ node_modules/
 npm-debug.log*
 coverage/
 data/archive/*.gz
+data/archive/howard-playable.json
+data/archive/*.tmp
