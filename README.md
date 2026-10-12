@@ -1,4 +1,4 @@
-# Jeopardy! | Multiplayer Trivia
+# Jeoparty! | Multiplayer Trivia
 
 **Live demo: [jeopardy-game-43jc.onrender.com](https://jeopardy-game-43jc.onrender.com)**
 
@@ -44,7 +44,7 @@ npm start
 The server listens on port `3000` and prints addresses similar to these:
 
 ```text
-Jeopardy multiplayer is live.
+Jeoparty! multiplayer is live.
 Open one of these addresses:
   http://localhost:3000
   http://192.168.1.42:3000

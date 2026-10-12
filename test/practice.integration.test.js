@@ -14,7 +14,7 @@ test('practice has a separate page and assets without creating a multiplayer roo
   const page = await fetch(`${origin}/practice`);
   assert.equal(page.status, 200);
   const html = await page.text();
-  assert.match(html, /<title>Trivia practice<\/title>/);
+  assert.match(html, /<title>Practice \| Jeoparty!<\/title>/);
   assert.doesNotMatch(html, /socket\.io/);
   assert.equal((await fetch(`${origin}/practice/`)).status, 200);
   for (const asset of ['practice.css', 'practice-data.js', 'practice-state.js', 'practice.js']) {

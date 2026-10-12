@@ -2,7 +2,7 @@
   "name": "jeopardy-local-multiplayer",
   "version": "2.0.1",
   "private": true,
-  "description": "A local-network multiplayer Jeopardy-style game for hosts and players.",
+  "description": "Jeoparty! — multiplayer trivia and solo practice for phones and computers.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
