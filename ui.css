@@ -209,6 +209,7 @@ h3 {
 }
 .hub-brand::before { content: none; }
 .brand-mark { width: 24px; height: 24px; flex-shrink: 0; color: var(--action-blue); }
+.brand-party { color: var(--action-blue); }
 .hub-actions { display: flex; gap: 8px; }
 .hub-actions a.button { text-decoration: none; }
 .hub-actions .button {

@@ -28,7 +28,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visibl
   border-bottom: 1px solid #e0e4e9;
 }
 .brand { display: inline-flex; align-items: center; gap: 12px; font-size: 20px; font-weight: 700; letter-spacing: -0.04em; text-decoration: none; }
-.brand svg { width: 22px; height: 22px; color: #365b93; }
+.brand svg { width: 22px; height: 22px; color: #2655a6; }
+.brand-party { color: #2655a6; }
 .site-header nav { display: flex; align-self: stretch; gap: 28px; }
 .site-header nav a { display: flex; align-items: center; padding: 2px 0 0; border-bottom: 2px solid transparent; font-size: 14px; color: #68717e; text-decoration: none; }
 .site-header nav a[aria-current] { color: #20252c; border-color: #20252c; }
