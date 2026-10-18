@@ -1,0 +1,157 @@
+{
+  "id": "sports",
+  "title": "Sports",
+  "description": "Sports · 5 categories · 25 clues",
+  "categories": [
+    {
+      "name": "a Sporting Chance",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "When 2 bowling pins are separated & you need to knock them down to get a spare, it's called one of these",
+          "answer": "What is a split?"
+        },
+        {
+          "value": 400,
+          "prompt": "Once won by UCLA 7 times in a row, this tournament begins with 64 teams & ends with 1 champion",
+          "answer": "What is the NCAA Men's Basketball Tournament?"
+        },
+        {
+          "value": 600,
+          "prompt": "The Green Bay Packers retired this bruising defensive lineman's No. 92 in 1999",
+          "answer": "What is Reggie White?"
+        },
+        {
+          "value": 800,
+          "prompt": "In area, it's the largest country in the world ever to host the Commonwealth Games",
+          "answer": "What is Canada?"
+        },
+        {
+          "value": 1000,
+          "prompt": "In 1931 this European city was awarded the Olympics, 2 years before a change in government there",
+          "answer": "What is Berlin?"
+        }
+      ]
+    },
+    {
+      "name": "Hall of Famers by Sport",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "Jerome Bettis",
+          "answer": "What is football?"
+        },
+        {
+          "value": 400,
+          "prompt": "Hank Greenberg",
+          "answer": "What is baseball?"
+        },
+        {
+          "value": 600,
+          "prompt": "Chris Mullin",
+          "answer": "What is basketball?"
+        },
+        {
+          "value": 800,
+          "prompt": "Jennifer Capriati",
+          "answer": "What is tennis?"
+        },
+        {
+          "value": 1000,
+          "prompt": "Dick Weber",
+          "answer": "What is bowlers?"
+        }
+      ]
+    },
+    {
+      "name": "Sports Jeopardy",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "In 2007 at a track & field event in Rome, a Finnish athlete impaled a long jumper 90 yards away with one of these",
+          "answer": "What is javelin?"
+        },
+        {
+          "value": 400,
+          "prompt": "After a 0-17 start in 2014, this NBA team with a numeric name was in serious jeopardy of not making the playoffs!",
+          "answer": "What is (Philadelphia) 76ers?"
+        },
+        {
+          "value": 600,
+          "prompt": "A runner breaking for the plate on the pitch as the batter tries to bunt is this \"deadly\" type of squeeze play",
+          "answer": "What is a suicide squeeze?"
+        },
+        {
+          "value": 800,
+          "prompt": "In 2009 Gilbert Arenas pulled a gun on a teammate on this squad, though it was no longer called the Bullets",
+          "answer": "What is (Washington) Wizards?"
+        },
+        {
+          "value": 1000,
+          "prompt": "On \"Wild World of Sports\", ski jumper Vinko Bogataj's crash exemplified this 4-word phrase in the show's intro",
+          "answer": "What is the agony of defeat?"
+        }
+      ]
+    },
+    {
+      "name": "Sporting Cliches",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "Hit below the belt",
+          "answer": "What is boxing?"
+        },
+        {
+          "value": 400,
+          "prompt": "Par for the course",
+          "answer": "What is golf?"
+        },
+        {
+          "value": 600,
+          "prompt": "Threw him a curve",
+          "answer": "What is baseball?"
+        },
+        {
+          "value": 800,
+          "prompt": "No holds barred",
+          "answer": "What is wrestling?"
+        },
+        {
+          "value": 1000,
+          "prompt": "Not pulling one's weight",
+          "answer": "What is rowing?"
+        }
+      ]
+    },
+    {
+      "name": "Oscar-nominated Sports Flicks",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "Rod Tidwell is an underpaid (by his lights) wide receiver in this film about a sports agent",
+          "answer": "What is Jerry Maguire?"
+        },
+        {
+          "value": 400,
+          "prompt": "This 1989 Oscar nominee was based on the W.P. Kinsella book \"Shoeless Joe\"",
+          "answer": "What is Field of Dreams?"
+        },
+        {
+          "value": 600,
+          "prompt": "Director Martin Scorsese had a bit part as a stagehand in this bio of Jake La Motta",
+          "answer": "What is Raging Bull?"
+        },
+        {
+          "value": 800,
+          "prompt": "This 1976 Oscar winner used the tagline \"You have a ringside seat for the bloodiest Bicentennial in history\"",
+          "answer": "What is Rocky?"
+        },
+        {
+          "value": 1000,
+          "prompt": "Several major league ballplayers had cameos in this 1942 Gary Cooper flick, including Babe Ruth & Bill Dickey",
+          "answer": "What is The Pride of the Yankees?"
+        }
+      ]
+    }
+  ]
+}

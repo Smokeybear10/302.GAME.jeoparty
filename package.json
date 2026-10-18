@@ -2,7 +2,7 @@
   "name": "jeopardy-local-multiplayer",
   "version": "2.0.1",
   "private": true,
-  "description": "Jeoparty! — multiplayer trivia and solo practice for phones and computers.",
+  "description": "Jeoparty! — multiplayer trivia, single-screen party games, and solo practice.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -10,7 +10,7 @@
     "fetch:archive": "node scripts/fetch-howard-archive.js",
     "build": "npm run fetch:archive",
     "test": "node --test",
-    "check": "node --check server.js && node --check lib/game-store.js && node --check lib/howard-archive.js && node --check scripts/fetch-howard-archive.js && node --check lib/room-manager.js && node --check app.js && node --check practice-data.js && node --check practice-state.js && node --check practice.js"
+    "check": "node --check server.js && node --check lib/game-store.js && node --check lib/howard-archive.js && node --check scripts/fetch-howard-archive.js && node --check lib/room-manager.js && node --check app.js && node --check practice-data.js && node --check practice-state.js && node --check practice.js && node --check lib/party-games.js && node --check party-state.js && node --check party.js"
   },
   "engines": {
     "node": ">=20"

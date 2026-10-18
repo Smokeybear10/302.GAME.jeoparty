@@ -1,0 +1,157 @@
+{
+  "id": "literature",
+  "title": "Literature",
+  "description": "Literature · 5 categories · 25 clues",
+  "categories": [
+    {
+      "name": "The Elements of Literature",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "The short story collection \"Dead Neon\" envisions strange, post-apocalyptic possibilities in this desert mecca",
+          "answer": "What is Las Vegas?"
+        },
+        {
+          "value": 400,
+          "prompt": "In a work by L. Frank Baum, the Scarecrow & this character are captured by a female giant & turned into a bear & an owl",
+          "answer": "What is the Tin Man?"
+        },
+        {
+          "value": 600,
+          "prompt": "Daniel Wallace's \"Supergirl\" is subtitled \"Daughter of\" this planet",
+          "answer": "What is Krypton?"
+        },
+        {
+          "value": 800,
+          "prompt": "D'Artagnan & the 3 Musketeers are up for adventure again in this 1850 work about a mysterious prisoner",
+          "answer": "What is The Man in the Iron Mask?"
+        },
+        {
+          "value": 1000,
+          "prompt": "\"The Silver Chair\" is the fourth book in the series about this fantasy land",
+          "answer": "What is Narnia?"
+        }
+      ]
+    },
+    {
+      "name": "Women in Literature",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "In \"Pride & Prejudice\", Mr. Bennet & this daughter discuss her possible engagement to Mr. Darcy",
+          "answer": "What is Elizabeth?"
+        },
+        {
+          "value": 400,
+          "prompt": "Charlotte Bronte wrote \"Shirley\" as well as this more famous novel with the heroine's name as the title",
+          "answer": "What is Jane Eyre?"
+        },
+        {
+          "value": 600,
+          "prompt": "Mrs. Whatsit, Mrs. Who & Mrs. Which help Meg Murry & her brother in this 1962 novel by Madeleine L'Engle",
+          "answer": "What is A Wrinkle in Time?"
+        },
+        {
+          "value": 800,
+          "prompt": "This William Makepeace Thackeray novel deals with the interwoven fortunes of 2 women: the passive Amelia & the scheming Becky",
+          "answer": "What is Vanity Fair?"
+        },
+        {
+          "value": 1000,
+          "prompt": "Rosalind from this comedy has the most lines of any of Shakespeare's women",
+          "answer": "What is As You Like It?"
+        }
+      ]
+    },
+    {
+      "name": "Alliterative Lit",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "Chapters in this book include \"The Departure of Boromir\" & \"Shelob's Lair\"",
+          "answer": "What is The Two Towers?"
+        },
+        {
+          "value": 400,
+          "prompt": "This Vonnegut title refers to a game played with string",
+          "answer": "What is Cat's Cradle?"
+        },
+        {
+          "value": 600,
+          "prompt": "It's the alternate title of \"Hans Brinker\"",
+          "answer": "What is The Silver Skates?"
+        },
+        {
+          "value": 800,
+          "prompt": "Hyphenated sound made by the vorpal blade in \"Jabberwocky\"",
+          "answer": "What is snicker-snack?"
+        },
+        {
+          "value": 1000,
+          "prompt": "This heedless horseman also known as Abraham Van Brunt taunts his rival Ichabod Crane",
+          "answer": "What is Brom Bones?"
+        }
+      ]
+    },
+    {
+      "name": "2-word Alliteration",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "The most basic elements or essentials, or what's in the photograph",
+          "answer": "What is bare bones?"
+        },
+        {
+          "value": 400,
+          "prompt": "Whether placed in hosiery or not, it's a small & often inexpensive Christmas gift",
+          "answer": "What is stocking stuffer?"
+        },
+        {
+          "value": 600,
+          "prompt": "It's something that personally annoys you, not Fluffy or Fido",
+          "answer": "What is pet peeve?"
+        },
+        {
+          "value": 800,
+          "prompt": "Powerful influence from your equals to act in a way acceptable to them",
+          "answer": "What is peer pressure?"
+        },
+        {
+          "value": 1000,
+          "prompt": "In 2018 Louise Brown, the first this type of baby, turned 40",
+          "answer": "What is test tube?"
+        }
+      ]
+    },
+    {
+      "name": "North American Literature",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "In this novel Guy Montag reads aloud from a book to his wife's shocked friends",
+          "answer": "What is Fahrenheit 451?"
+        },
+        {
+          "value": 400,
+          "prompt": "Canadian environmentalist Farley Mowat is best known for bringing sympathy to a predator in \"Never Cry\" this",
+          "answer": "What is Wolf?"
+        },
+        {
+          "value": 600,
+          "prompt": "This 1991 novel by Canadian Douglas Coupland gave a name to a whole cohort born around the same time",
+          "answer": "What is Generation X?"
+        },
+        {
+          "value": 800,
+          "prompt": "His 1947 play \"All My Sons\" is about a businessman whose substandard airplane parts cost young men their lives",
+          "answer": "What is (Arthur) Miller?"
+        },
+        {
+          "value": 1000,
+          "prompt": "The title of this Laura Esquivel bestseller refers to a sweet recipe but also a state of passion or anger",
+          "answer": "What is Like Water for Chocolate?"
+        }
+      ]
+    }
+  ]
+}

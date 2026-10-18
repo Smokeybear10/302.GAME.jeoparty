@@ -1,0 +1,157 @@
+{
+  "id": "music",
+  "title": "Music",
+  "description": "Music · 5 categories · 25 clues",
+  "categories": [
+    {
+      "name": "Musical Synopses",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "Title character cleans orphanage, escapes, meets a dog & a rich buy but no parents, Miss Hannigan goes to jail",
+          "answer": "What is Annie?"
+        },
+        {
+          "value": 400,
+          "prompt": "Singer Conrad, about to be inducted, will kiss a girl on \"The Ed Sullivan Show\" before he goes",
+          "answer": "What is Bye Bye Birdie?"
+        },
+        {
+          "value": 600,
+          "prompt": "Spunky gal dreams of riches while stuck in Missouri, marries prospector, loses prospector, gets on Titanic",
+          "answer": "What is The Unsinkable Molly Brown?"
+        },
+        {
+          "value": 800,
+          "prompt": "Penniless English soprano in Paris turns to cross dressing, sorta, meets American gangster, confusion reigns",
+          "answer": "What is Victor/Victoria?"
+        },
+        {
+          "value": 1000,
+          "prompt": "2 Americans are in a misty Scottish glen when they encounter a village that comes alive one day every century",
+          "answer": "What is Brigadoon?"
+        }
+      ]
+    },
+    {
+      "name": "Musicmakers",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "In 2003 he & Art Garfunkel broke their \"Sounds of Silence\", reuniting for the Grammys & a new tour",
+          "answer": "What is Paul Simon?"
+        },
+        {
+          "value": 400,
+          "prompt": "Yes, Sir! His 2002 \"Back in the U.S.\" tour was named Tour of the Year by Billboard Magazine",
+          "answer": "What is Paul McCartney?"
+        },
+        {
+          "value": 600,
+          "prompt": "He did a little of \"My Way\" his way when he appeared on an episode of TV's \"Las Vegas\"",
+          "answer": "What is Paul Anka?"
+        },
+        {
+          "value": 800,
+          "prompt": "The Raiders, a \"Revolutionary\" group of the '60s, were led by a man with this Revolutionary name",
+          "answer": "What is Paul Revere?"
+        },
+        {
+          "value": 1000,
+          "prompt": "In 1972 he \"and Mrs. Jones\" had a \"thing going on\"",
+          "answer": "What is Billy Paul?"
+        }
+      ]
+    },
+    {
+      "name": "Killer Musicals",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "As act one of this musical draws to a close, the lookout says, \"Dear mother of God -- iceberg right ahead!\"",
+          "answer": "What is Titanic?"
+        },
+        {
+          "value": 400,
+          "prompt": "The Capeman\", this songwriter's musical about a killer, opened to protests, not to \"Sounds of Silence",
+          "answer": "What is Paul Simon?"
+        },
+        {
+          "value": 600,
+          "prompt": "The Richard Rodgers musical \"Rex\" starred Nicol Williamson as this king who made some women lose their heads",
+          "answer": "What is Henry VIII?"
+        },
+        {
+          "value": 800,
+          "prompt": "In a 1966 musical, Beauregard Jackson Pickett Burnside, husband of this title \"Auntie\", falls off an Alp",
+          "answer": "What is Auntie Mame?"
+        },
+        {
+          "value": 1000,
+          "prompt": "The murder mystery musical \"Something's Afoot\" parodies the plot of this author's \"Ten Little Indians\"",
+          "answer": "What is Agatha Christie?"
+        }
+      ]
+    },
+    {
+      "name": "'60s Music Potpourri",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "This late '60s music & art fair in Bethel, New York lent its name to a Charles Schulz character",
+          "answer": "What is Woodstock?"
+        },
+        {
+          "value": 400,
+          "prompt": "Diabetics beware: the top-selling pop single of 1969 was this double-talk song from the Archies",
+          "answer": "What is \"Sugar, Sugar\"?"
+        },
+        {
+          "value": 600,
+          "prompt": "(Kelly of the Clue Crew presents from Rickenbacker Guitars in Santa Ana, California.) The Beatles were so identified with Rickenbacker guitars that many fans thought the company was British; in the '60s, the Southern California factory received dozens of letters address to this city in the north of England",
+          "answer": "What is Liverpool?"
+        },
+        {
+          "value": 800,
+          "prompt": "\"We can't go on together\" into the '70s, Elvis--your last No. 1 hit was this 1969 song",
+          "answer": "What is \"Suspicious Minds\"?"
+        },
+        {
+          "value": 1000,
+          "prompt": "Mind-expanding drugs influenced the name of this style of rock performed by the Grateful Dead & Jefferson Airplane",
+          "answer": "What is psychedelic rock?"
+        }
+      ]
+    },
+    {
+      "name": "The Number in Music",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "This late, great rapper went by the alphanumeric version of his name when he joined forces with Dr. Dre on \"California Love\"",
+          "answer": "What is 2Pac?"
+        },
+        {
+          "value": 400,
+          "prompt": "Later an actor & a Grammy winner, he teamed with Big Boi, with whom he went to high school in Atlanta",
+          "answer": "What is André 3000?"
+        },
+        {
+          "value": 600,
+          "prompt": "In 2004 Jay-Z had a hit with this many title \"Problems\" but hopefully, our clue ain't one",
+          "answer": "What is 99?"
+        },
+        {
+          "value": 800,
+          "prompt": "It would be a (disorganized) crime if you didn't know this group won an Oscar for their song \"It's Hard Out Here For A Pimp\"",
+          "answer": "What is Three 6 Mafia?"
+        },
+        {
+          "value": 1000,
+          "prompt": "Noted for neckware, he was in Playaz Circle before teaming with Drake to go platinum with \"No Lie\"",
+          "answer": "What is 2 Chainz?"
+        }
+      ]
+    }
+  ]
+}

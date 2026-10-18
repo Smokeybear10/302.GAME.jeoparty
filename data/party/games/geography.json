@@ -1,0 +1,157 @@
+{
+  "id": "geography",
+  "title": "Geography",
+  "description": "Geography · 5 categories · 25 clues",
+  "categories": [
+    {
+      "name": "\"ez\" Geography",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "An arm of the Red Sea, this gulf bears the name of the canal it feeds into",
+          "answer": "What is Suez?"
+        },
+        {
+          "value": 400,
+          "prompt": "El Paso, Texas sits just opposite this Mexican city on the Rio Grande",
+          "answer": "What is Juárez?"
+        },
+        {
+          "value": 600,
+          "prompt": "This city on the Lower Mississippi takes its name from a Native American people who once lived there",
+          "answer": "What is Natchez?"
+        },
+        {
+          "value": 800,
+          "prompt": "Brigitte Bardot & the filming of \"And God Created Woman\" made this \"saint\"ly French Riviera town an international destination",
+          "answer": "What is Saint-Tropez?"
+        },
+        {
+          "value": 1000,
+          "prompt": "This river flows for more than 1,700 miles east across Africa, emptying into the Mozambique Channel",
+          "answer": "What is Zambezi?"
+        }
+      ]
+    },
+    {
+      "name": "Geographic Squares",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "This London square is dominated by a 170-foot column topped by a statue of Horatio Nelson",
+          "answer": "What is Trafalgar Square?"
+        },
+        {
+          "value": 400,
+          "prompt": "It's the square seen here[New York City]",
+          "answer": "What is Times Square?"
+        },
+        {
+          "value": 600,
+          "prompt": "Krasnaya Ploshchad, the Russian name for this, can mean \"beautiful square\"",
+          "answer": "What is Red Square?"
+        },
+        {
+          "value": 800,
+          "prompt": "On June 3 & 4, 1989, the People's Liberation Army killed hundreds of pro-democracy supporters here",
+          "answer": "What is Tiananmen Square?"
+        },
+        {
+          "value": 1000,
+          "prompt": "Called the \"Drawing Room of Europe\" by Napoleon, it's been the heart of Venetian life for over 1,000 years",
+          "answer": "What is Piazza San Marco (St. Mark's Square)?"
+        }
+      ]
+    },
+    {
+      "name": "New Zealand Geography",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "In the 1880s the area around Waikari was the birthplace of the Corriedale, New Zealand's first homegrown breed of this",
+          "answer": "What is sheep?"
+        },
+        {
+          "value": 400,
+          "prompt": "In the city of Rotorua, you can visit the geothermal area of Wai-O-Tapu, home to Lady Knox, one of these that erupts daily",
+          "answer": "What is a geyser?"
+        },
+        {
+          "value": 600,
+          "prompt": "The highest peak in New Zealand is this 12,200-foot mount named for an 18th century sea captain",
+          "answer": "What is Mount Cook?"
+        },
+        {
+          "value": 800,
+          "prompt": "Port Nicholson is the historical name of the harbor of this city, home to the National Symphony Orchestra",
+          "answer": "What is Wellington?"
+        },
+        {
+          "value": 1000,
+          "prompt": "This \"Garden City\" named for a college at Oxford University had its peace shattered by 2 mosque shootings in 2019",
+          "answer": "What is Christchurch?"
+        }
+      ]
+    },
+    {
+      "name": "Foreign Geographical Terms",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "Preceding Madre & Nevada, it's Spanish for a jagged mountain chain",
+          "answer": "What is Sierra?"
+        },
+        {
+          "value": 400,
+          "prompt": "Brücke is German for this structure",
+          "answer": "What is a bridge?"
+        },
+        {
+          "value": 600,
+          "prompt": "Before Frio & San Lucas, it means cape",
+          "answer": "What is Cabo?"
+        },
+        {
+          "value": 800,
+          "prompt": "In Chinese: he, as in Huang He",
+          "answer": "What is a river?"
+        },
+        {
+          "value": 1000,
+          "prompt": "In Norwegian: regnskog (it's full of life)",
+          "answer": "What is rain forest?"
+        }
+      ]
+    },
+    {
+      "name": "Geographic Abbrev.",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "It's the SF in the airport code SFO",
+          "answer": "What is San Francisco?"
+        },
+        {
+          "value": 400,
+          "prompt": "AS:This U.S. Pacific territory",
+          "answer": "What is American Samoa?"
+        },
+        {
+          "value": 600,
+          "prompt": "SL:This West African nation",
+          "answer": "What is Sierra Leone?"
+        },
+        {
+          "value": 800,
+          "prompt": "MB:This Canadian province",
+          "answer": "What is Manitoba?"
+        },
+        {
+          "value": 1000,
+          "prompt": "BH:This nation, a former Yugoslav republic",
+          "answer": "What is Bosnia and Herzegovina?"
+        }
+      ]
+    }
+  ]
+}
