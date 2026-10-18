@@ -37,6 +37,7 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console }
   app.get('/app.js', (_request, response) => response.sendFile(path.join(ROOT, 'app.js')));
   app.get('/style.css', (_request, response) => response.sendFile(path.join(ROOT, 'style.css')));
   app.get('/ui.css', (_request, response) => response.sendFile(path.join(ROOT, 'ui.css')));
+  app.get('/site-header.css', (_request, response) => response.sendFile(path.join(ROOT, 'site-header.css')));
   app.get('/favicon.ico', (_request, response) => response.status(204).end());
   app.use((_request, response) => response.status(404).json({ error: 'Not found' }));
 

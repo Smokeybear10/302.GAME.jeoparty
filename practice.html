@@ -7,14 +7,15 @@
     <meta name="description" content="Learn a little every day with mixed trivia, hints, and explanations. Save the questions you want to review.">
     <title>Practice | Jeoparty!</title>
     <link rel="stylesheet" href="/practice.css">
+    <link rel="stylesheet" href="/site-header.css">
     <script src="/practice-data.js" defer></script>
     <script src="/practice-state.js" defer></script>
     <script src="/practice.js" defer></script>
   </head>
   <body>
     <header class="site-header">
-      <a class="brand" href="/" aria-label="Jeoparty home">
-        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M2 3h5v7H2zm7.5 0h5v7h-5zM17 3h5v7h-5zM2 12h5v9H2zm7.5 0h5v9h-5zM17 12h5v9h-5z"/></svg>
+      <a class="site-brand" href="/" aria-label="Jeoparty home">
+        <svg class="brand-mark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M2 3h5v7H2zm7.5 0h5v7h-5zM17 3h5v7h-5zM2 12h5v9H2zm7.5 0h5v9h-5zM17 12h5v9h-5z" /></svg>
         <span>Jeo<span class="brand-party">party!</span></span>
       </a>
       <nav aria-label="Main navigation">
@@ -33,15 +34,15 @@
       <div class="practice-layout">
         <aside class="practice-options" aria-label="Practice settings">
           <details class="topic-filters" id="topic-filters" open>
-            <summary>Include topics <span id="topic-selection-count">All 8</span></summary>
+            <summary>Filters <span id="topic-selection-count">All 8</span></summary>
             <fieldset>
               <legend class="sr-only">Include topics</legend>
               <div class="topic-shortcuts"><button type="button" id="select-all">All</button><span aria-hidden="true">/</span><button type="button" id="select-none">None</button></div>
               <div id="topic-options"></div>
             </fieldset>
+            <label class="review-toggle"><input type="checkbox" id="review-only"><span>Only questions to review</span></label>
+            <p class="save-note" id="save-note">Progress saves in this browser.</p>
           </details>
-          <label class="review-toggle"><input type="checkbox" id="review-only"><span>Only questions to review</span></label>
-          <p class="save-note" id="save-note">Progress saves in this browser.</p>
         </aside>
         <section class="question-area" id="question-area" aria-label="Practice question">
           <p>Loading questions…</p>

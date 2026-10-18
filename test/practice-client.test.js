@@ -14,19 +14,25 @@ const reviewProgress = {
   records: { 'history-magna-carta': { attempts: 1, correct: 0, needsReview: true, lastReviewed: 100 } },
 };
 
-function startPractice({ saved = null, unavailable = false } = {}) {
+function startPractice({ saved = null, unavailable = false, mobile = false } = {}) {
   const nodes = new Map();
   const listeners = new Map();
   const values = new Map(saved === null ? [] : [[key, typeof saved === 'string' ? saved : JSON.stringify(saved)]]);
+  const scrolls = [];
+  const mobileLayout = {
+    matches: mobile,
+    addEventListener: (type, callback) => listeners.set(`media:${type}`, callback),
+  };
   let focused = null;
   const node = (selector) => {
     if (!nodes.has(selector)) nodes.set(selector, {
-      innerHTML: '', textContent: '', checked: false, hidden: false,
+      innerHTML: '', textContent: '', checked: false, hidden: false, open: true,
       classList: { toggle() {} },
       addEventListener: (type, callback) => listeners.set(`${selector}:${type}`, callback),
       querySelector: (child) => node(`${selector} ${child}`),
       querySelectorAll: () => [],
       focus: () => { focused = selector; },
+      scrollIntoView: (options) => scrolls.push({ selector, ...options }),
     });
     return nodes.get(selector);
   };
@@ -34,7 +40,7 @@ function startPractice({ saved = null, unavailable = false } = {}) {
     document: { querySelector: node },
     window: {
       addEventListener: (type, callback) => listeners.set(`window:${type}`, callback),
-      matchMedia: () => ({ matches: false }),
+      matchMedia: () => mobileLayout,
     },
     localStorage: {
       getItem(name) {
@@ -49,7 +55,7 @@ function startPractice({ saved = null, unavailable = false } = {}) {
   });
   scripts.forEach((script) => script.runInContext(context));
   return {
-    node, values,
+    node, values, scrolls,
     evaluate: (source) => vm.runInContext(source, context),
     focus: () => focused,
     click(action) {
@@ -57,6 +63,10 @@ function startPractice({ saved = null, unavailable = false } = {}) {
     },
     storage(progress) {
       listeners.get('window:storage')({ key, newValue: JSON.stringify(progress) });
+    },
+    resizeMobile(matches) {
+      mobileLayout.matches = matches;
+      listeners.get('media:change')({ matches });
     },
   };
 }
@@ -135,7 +145,53 @@ test('stale and repeated rating clicks cannot score an unrevealed question', () 
   assert.equal(client.evaluate('Object.keys(practiceProgress.records).length'), 1);
 });
 
-test('empty-state actions focus the new question heading', () => {
+test('mobile settings start collapsed without changing restored practice options', () => {
+  const client = startPractice({ saved: reviewProgress, mobile: true });
+  assert.equal(client.node('#topic-filters').open, false);
+  assert.equal(client.node('#review-only').checked, true);
+  assert.equal(client.node('#topic-selection-count').textContent, '1 selected');
+  assert.equal(client.evaluate('practiceQuestion.id'), 'history-magna-carta');
+  assert.equal(client.node('#save-note').textContent, 'Progress saves in this browser.');
+  assert.equal(client.focus(), null);
+  assert.deepEqual(client.scrolls, []);
+});
+
+test('crossing the mobile breakpoint changes settings visibility without resetting practice', () => {
+  const client = startPractice({ saved: reviewProgress });
+  const progress = client.evaluate('JSON.stringify(practiceProgress)');
+  assert.equal(client.node('#topic-filters').open, true);
+  for (const mobile of [true, false, true]) {
+    client.resizeMobile(mobile);
+    assert.equal(client.node('#topic-filters').open, !mobile);
+    assert.equal(client.node('#review-only').checked, true);
+    assert.equal(client.node('#topic-selection-count').textContent, '1 selected');
+    assert.equal(client.evaluate('JSON.stringify(practiceProgress)'), progress);
+    assert.equal(client.evaluate('practiceQuestion.id'), 'history-magna-carta');
+  }
+  assert.deepEqual(client.scrolls, []);
+});
+
+test('revealing an answer focuses and scrolls to the answer heading', () => {
+  const client = startPractice({ mobile: true });
+  client.click('reveal');
+  assert.equal(client.node('#question-area #practice-answer').hidden, false);
+  assert.equal(client.focus(), '#question-area #practice-answer-title');
+  assert.deepEqual(client.scrolls, [{ selector: '#question-area #practice-answer-title', block: 'start' }]);
+});
+
+test('skipping or rating returns focus and scroll to the next question', () => {
+  for (const action of ['skip', 'known', 'review']) {
+    const client = startPractice({ mobile: true });
+    const firstId = client.evaluate('practiceQuestion.id');
+    if (action !== 'skip') client.click('reveal');
+    client.click(action);
+    assert.notEqual(client.evaluate('practiceQuestion.id'), firstId);
+    assert.equal(client.focus(), '#question-area h2');
+    assert.deepEqual(client.scrolls.at(-1), { selector: '#question-area h2', block: 'start' });
+  }
+});
+
+test('empty-state actions focus and scroll to the new question heading', () => {
   for (const [saved, action] of [
     [{ selectedTopics: [] }, 'all-topics'],
     [{ reviewOnly: true }, 'mixed'],
@@ -144,5 +200,6 @@ test('empty-state actions focus the new question heading', () => {
     client.click(action);
     assert.ok(client.evaluate('practiceQuestion'));
     assert.equal(client.focus(), '#question-area h2');
+    assert.deepEqual(client.scrolls.at(-1), { selector: '#question-area h2', block: 'start' });
   }
 });
