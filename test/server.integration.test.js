@@ -36,6 +36,27 @@ function nextState(socket, predicate = () => true) {
   });
 }
 
+test('retired party links lead home and party assets and APIs are unavailable', async (context) => {
+  const server = createJeopardyServer({ games: loadGames(), logger: { error() {} } });
+  const address = await server.start(0, '127.0.0.1');
+  context.after(() => server.stop());
+  const origin = `http://127.0.0.1:${address.port}`;
+
+  for (const path of ['/party', '/party/', '/party.html', '/party?board=business&version=old']) {
+    const response = await fetch(`${origin}${path}`, { redirect: 'manual' });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/');
+  }
+  for (const path of ['/api/party/games', '/api/party/games/business', '/api/party/random', '/party.js', '/party-state.js', '/party.css']) {
+    assert.equal((await fetch(`${origin}${path}`)).status, 404);
+  }
+  for (const path of ['/', '/practice']) {
+    const response = await fetch(`${origin}${path}`);
+    assert.equal(response.status, 200);
+    assert.doesNotMatch(await response.text(), /href=["']\/party(?:["'?/])/);
+  }
+});
+
 test('HTTP and Socket.IO clients can host, join, start, and buzz without leaking answers', async (context) => {
   const games = loadGames();
   const jeopardy = createJeopardyServer({ games, logger: { error() {} } });

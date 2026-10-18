@@ -6,7 +6,6 @@ const path = require('node:path');
 const express = require('express');
 const { Server } = require('socket.io');
 const { catalogGames, loadPreferredGames } = require('./lib/game-store');
-const { catalogPartyGames, loadPartyGames, loadPartyPool, randomPartyGame } = require('./lib/party-games');
 const { RoomError, RoomManager } = require('./lib/room-manager');
 
 const ROOT = __dirname;
@@ -20,10 +19,6 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console }
   });
   const gameCatalog = catalogGames(games);
   const rooms = new RoomManager({ games });
-  const partyGames = loadPartyGames();
-  const partyGamesById = new Map(partyGames.map((game) => [game.id, game]));
-  const partyCatalog = catalogPartyGames(partyGames);
-  let partyPool;
 
   app.disable('x-powered-by');
   app.get('/health', (_request, response) => {
@@ -33,31 +28,7 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console }
     response.json({ urls: localNetworkUrls(request.socket.localPort) });
   });
   app.get('/api/games', (_request, response) => response.json(gameCatalog));
-  app.get('/api/party/games', (_request, response) => response.json(partyCatalog));
-  app.get('/api/party/games/:id', (request, response) => {
-    const game = partyGamesById.get(request.params.id);
-    if (!game) return response.status(404).json({ error: 'Party board not found.' });
-    if (request.query.version !== undefined && request.query.version !== game.boardVersion) {
-      return response.status(409).json({ error: 'This shared board has changed. Choose the current board from the library.' });
-    }
-    response.json(game);
-  });
-  app.get('/api/party/random', (request, response) => {
-    const { seed, version } = request.query;
-    if (seed !== undefined && (typeof seed !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(seed))) {
-      return response.status(400).json({ error: 'Seed must contain 1–64 letters, numbers, underscores, or hyphens.' });
-    }
-    partyPool ??= loadPartyPool();
-    if (version !== undefined && version !== partyPool.version) {
-      return response.status(409).json({ error: 'This shared random board uses an older clue pool. Start a new random board.' });
-    }
-    response.set('Cache-Control', 'no-store');
-    response.json(randomPartyGame(partyPool, seed));
-  });
-  app.get(['/party', '/party/', '/party.html'], (_request, response) => response.sendFile(path.join(ROOT, 'party.html')));
-  for (const asset of ['party.css', 'party.js', 'party-state.js']) {
-    app.get(`/${asset}`, (_request, response) => response.sendFile(path.join(ROOT, asset)));
-  }
+  app.get(['/party', '/party/', '/party.html'], (_request, response) => response.redirect(302, '/'));
   app.get(['/practice', '/practice/'], (_request, response) => response.sendFile(path.join(ROOT, 'practice.html')));
   for (const asset of ['practice.css', 'practice-data.js', 'practice-state.js', 'practice.js']) {
     app.get(`/${asset}`, (_request, response) => response.sendFile(path.join(ROOT, asset)));
