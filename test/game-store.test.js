@@ -46,7 +46,10 @@ test('game catalog exposes topics but not clues or answers', () => {
   assert.equal(catalog[0].year, null);
   assert.equal(serialized.includes('finalJeopardy'), false);
   assert.equal(serialized.includes('answer'), false);
-  assert.equal(serialized.includes('clue'), false);
+  assert.equal(serialized.includes('"clue":'), false);
+  assert.equal(catalog[0].roundCount, 1);
+  assert.equal(catalog[0].clueCount, 30);
+  assert.deepEqual(catalog[0].doubleJeopardyCategories, []);
 });
 
 test('the old bundled game titles are absent', () => {
@@ -86,4 +89,33 @@ test('loader reports malformed null entries without crashing', (context) => {
     () => loadGames(directory),
     (error) => error.message.includes('broken.json[0] must be an object'),
   );
+});
+
+
+test('validates Double Jeopardy values and Daily Doubles and exposes both sets of topics', () => {
+  const game = structuredClone(loadGames()[0]);
+  game.doubleJeopardy = {
+    categories: game.categories.map((category, categoryIndex) => ({
+      name: `Double ${category.name}`,
+      clues: category.clues.map((clue, clueIndex) => ({
+        ...clue,
+        value: clue.value * 2,
+        dailyDouble: categoryIndex < 2 && clueIndex === 3,
+      })),
+    })),
+  };
+  assert.deepEqual(validateGame(game), []);
+  const [catalog] = catalogGames([game]);
+  assert.equal(catalog.roundCount, 2);
+  assert.equal(catalog.clueCount, 60);
+  assert.deepEqual(catalog.doubleJeopardyCategories, game.doubleJeopardy.categories.map(({ name }) => name));
+  assert.equal(JSON.stringify(catalog).includes('"answer":'), false);
+
+  game.doubleJeopardy.categories[0].clues[0].value = 200;
+  assert.ok(validateGame(game).some((error) => error.includes('doubleJeopardy.categories[0].clues[0].value must be 400')));
+  game.doubleJeopardy.categories[0].clues[0].value = 400;
+  game.doubleJeopardy.categories[0].clues[3].dailyDouble = false;
+  assert.ok(validateGame(game).some((error) => error.includes('two Daily Doubles')));
+  game.doubleJeopardy = null;
+  assert.ok(validateGame(game).some((error) => error.includes('doubleJeopardy must be an object')));
 });

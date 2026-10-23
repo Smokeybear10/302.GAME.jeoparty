@@ -2,6 +2,8 @@
 
 const SESSION_KEY = 'jeopardy_multiplayer_session_v1';
 const NAME_KEY = 'jeopardy_multiplayer_name_v1';
+const HISTORY_KEY = 'jeoparty_game_history_v1';
+const HISTORY_LIMIT = 100;
 const CATALOG_RENDER_LIMIT = 60;
 
 const elements = {
@@ -29,12 +31,16 @@ const elements = {
   publicGameCount: document.querySelector('#public-game-count'),
   publicGameList: document.querySelector('#public-game-list'),
   toastRegion: document.querySelector('#toast-region'),
+  historyCount: document.querySelector('#history-count'),
+  historyNote: document.querySelector('#history-note'),
+  historyList: document.querySelector('#history-list'),
 };
 
 const socket = io({ autoConnect: false });
 let roomState = null;
 let connected = false;
 let hasConnected = false;
+let sessionReplaced = false;
 let resuming = false;
 let mutationPending = false;
 let joining = false;
@@ -54,6 +60,11 @@ let renderedClueKey = '';
 let hostGameListScroll = 0;
 let customBuilderOpen = false;
 let customBuilderSection = 0;
+let memorySession;
+let memoryName;
+let sessionStorageWarningShown = false;
+let memoryHistory = [];
+let historyStorageUnavailable = false;
 const drafts = {
   hostName: null,
   dailyPlayerId: '',
@@ -100,7 +111,7 @@ function filterCatalog(catalog, search, year) {
   const normalizedSearch = search.trim().toLowerCase();
   return catalog.filter((game) => {
     if (year !== 'all' && String(game.year) !== year) return false;
-    const haystack = `${game.title} ${game.description} ${game.categories.join(' ')}`.toLowerCase();
+    const haystack = `${game.title} ${game.description} ${game.categories.join(' ')} ${(game.doubleJeopardyCategories || []).join(' ')}`.toLowerCase();
     return haystack.includes(normalizedSearch);
   });
 }
@@ -118,21 +129,18 @@ function formatMoney(value) {
 }
 
 function savedSession() {
+  if (memorySession !== undefined) return memorySession;
   let tabSession;
   try {
     tabSession = sessionStorage.getItem(SESSION_KEY);
   } catch {
-    return null;
+    return memorySession = null;
   }
   if (tabSession !== null) {
     try {
-      return JSON.parse(tabSession);
+      return memorySession = JSON.parse(tabSession);
     } catch {
-      try {
-        sessionStorage.removeItem(SESSION_KEY);
-      } catch {
-        // Storage may be unavailable in a restricted browser context.
-      }
+      clearSession();
       return null;
     }
   }
@@ -143,30 +151,39 @@ function savedSession() {
   try {
     legacySession = localStorage.getItem(SESSION_KEY);
   } catch {
-    return null;
+    return memorySession = null;
   }
-  if (legacySession === null) return null;
+  if (legacySession === null) return memorySession = null;
 
   let session;
   try {
     session = JSON.parse(legacySession);
   } catch {
-    localStorage.removeItem(SESSION_KEY);
+    clearSession();
     return null;
   }
 
+  memorySession = session;
   try {
     sessionStorage.setItem(SESSION_KEY, legacySession);
-  } catch {
-    return session;
-  }
-  localStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(SESSION_KEY);
+  } catch {}
   return session;
 }
 
 function saveSession(session) {
-  sessionStorage.setItem(SESSION_KEY, JSON.stringify({ ...session, preferredGameId }));
-  localStorage.removeItem(SESSION_KEY);
+  memorySession = { ...session, preferredGameId };
+  try {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(memorySession));
+  } catch {
+    if (!sessionStorageWarningShown) {
+      sessionStorageWarningShown = true;
+      showToast('Browser storage is unavailable. Keep this tab open; reloading may lose your place in the room.', 'info');
+    }
+  }
+  try {
+    localStorage.removeItem(SESSION_KEY);
+  } catch {}
 }
 
 function setPreferredGame(gameId) {
@@ -176,8 +193,129 @@ function setPreferredGame(gameId) {
 }
 
 function clearSession() {
-  sessionStorage.removeItem(SESSION_KEY);
-  localStorage.removeItem(SESSION_KEY);
+  memorySession = null;
+  try {
+    sessionStorage.removeItem(SESSION_KEY);
+  } catch {}
+  try {
+    localStorage.removeItem(SESSION_KEY);
+  } catch {}
+}
+
+function savedName() {
+  if (memoryName !== undefined) return memoryName;
+  try {
+    memoryName = localStorage.getItem(NAME_KEY) || '';
+  } catch {
+    memoryName = '';
+  }
+  return memoryName;
+}
+
+function saveName(name) {
+  memoryName = name;
+  try {
+    localStorage.setItem(NAME_KEY, name);
+  } catch {}
+}
+
+function completedGame(value) {
+  if (!value || typeof value !== 'object' || typeof value.id !== 'string' || !/^g_[a-f0-9]{12}$/.test(value.id)
+    || typeof value.gameId !== 'string' || !value.gameId || value.gameId.length > 200
+    || typeof value.title !== 'string' || !value.title || value.title.length > 200
+    || typeof value.custom !== 'boolean'
+    || !Number.isSafeInteger(value.completedAt) || value.completedAt < 0 || value.completedAt > 8640000000000000
+    || !Number.isSafeInteger(value.revision) || value.revision < 1
+    || !Array.isArray(value.players) || value.players.length > 8) return null;
+  const ids = new Set();
+  for (const player of value.players) {
+    if (!player || typeof player.id !== 'string' || !/^p_[a-f0-9]{12}$/.test(player.id) || ids.has(player.id)
+      || typeof player.name !== 'string' || !player.name.trim() || player.name.length > 24
+      || !Number.isSafeInteger(player.score)) return null;
+    ids.add(player.id);
+  }
+  return {
+    id: value.id, gameId: value.gameId, title: value.title, custom: value.custom,
+    completedAt: value.completedAt, revision: value.revision,
+    players: value.players.map(({ id, name, score }) => ({ id, name, score })),
+  };
+}
+
+function mergeGameHistory(...lists) {
+  const games = new Map();
+  for (const value of lists.flat()) {
+    const game = completedGame(value);
+    if (game && (!games.has(game.id) || game.revision > games.get(game.id).revision)) games.set(game.id, game);
+  }
+  return [...games.values()].sort((first, second) => second.completedAt - first.completedAt || first.id.localeCompare(second.id)).slice(0, HISTORY_LIMIT);
+}
+
+function parseGameHistory(raw) {
+  try {
+    const value = JSON.parse(raw);
+    return value?.version === 1 && Array.isArray(value.games) ? value.games : [];
+  } catch {
+    return [];
+  }
+}
+
+function readGameHistory() {
+  let stored = [];
+  try {
+    stored = parseGameHistory(localStorage.getItem(HISTORY_KEY));
+  } catch {
+    historyStorageUnavailable = true;
+  }
+  memoryHistory = mergeGameHistory(stored, memoryHistory);
+  return memoryHistory;
+}
+
+function rememberCompletedGames(state) {
+  if (!Array.isArray(state?.completedGames) || !state.completedGames.length) return;
+  memoryHistory = mergeGameHistory(readGameHistory(), state.completedGames);
+  const saved = JSON.stringify({ version: 1, games: memoryHistory });
+  try {
+    if (localStorage.getItem(HISTORY_KEY) !== saved) localStorage.setItem(HISTORY_KEY, saved);
+    historyStorageUnavailable = false;
+  } catch {
+    historyStorageUnavailable = true;
+  }
+}
+
+function renderGameHistory() {
+  const games = readGameHistory();
+  elements.historyCount.textContent = String(games.length);
+  elements.historyNote.textContent = historyStorageUnavailable
+    ? 'Browser storage is unavailable. Keep this page open to retain new results.'
+    : 'Your last 100 completed games, saved in this browser. Clearing site data removes them.';
+  const html = games.length ? games.map((game) => {
+    const ranked = [...game.players].sort((first, second) => second.score - first.score);
+    const leaders = ranked.filter((player) => player.score === ranked[0]?.score);
+    const outcome = ranked.length === 1 ? 'Solo game'
+      : leaders.length > 1 ? `Tie · ${leaders.map((player) => player.name).join(', ')}`
+      : leaders[0] ? `${leaders[0].name} won` : 'No players';
+    const available = !game.custom && publicGameCatalog.some((candidate) => candidate.id === game.gameId);
+    const date = new Date(game.completedAt);
+    return `<details class="history-game" data-history-id="${escapeAttr(game.id)}">
+      <summary>
+        <span class="history-game-title"><strong>${escapeHtml(game.title)}</strong><time datetime="${date.toISOString()}">${escapeHtml(date.toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }))}</time></span>
+        <span class="history-game-result">${escapeHtml(outcome)}</span>
+        <span class="history-game-score">${ranked.length ? formatMoney(ranked[0].score) : '—'}</span>
+      </summary>
+      <div class="history-game-details">
+        <ol class="history-score-list" aria-label="Final scores">${ranked.map((player) => {
+          const place = ranked.findIndex((candidate) => candidate.score === player.score) + 1;
+          return `<li><span class="place">${place}</span><strong class="name">${escapeHtml(player.name)}</strong><span class="score">${formatMoney(player.score)}</span></li>`;
+        }).join('')}</ol>
+        ${available ? `<button class="button button-secondary" type="button" data-replay-game-id="${escapeAttr(game.gameId)}" ${!connected || resuming ? 'disabled' : ''}>Play this board again</button>`
+          : `<p class="history-unavailable">${game.custom ? 'Custom board' : catalogStatus === 'ready' ? 'This board is no longer in the archive.' : 'Reconnect and load the archive to play this board again.'}</p>`}
+      </div>
+    </details>`;
+  }).join('') : '<p class="history-unavailable">No finished games yet. Results appear here after final standings are shown.</p>';
+  if (elements.historyList.innerHTML === html) return;
+  const expanded = new Set([...elements.historyList.querySelectorAll('details[open]')].map((item) => item.dataset.historyId));
+  elements.historyList.innerHTML = html;
+  elements.historyList.querySelectorAll('details').forEach((item) => { item.open = expanded.has(item.dataset.historyId); });
 }
 
 function showToast(message, tone = 'info') {
@@ -193,9 +331,12 @@ function showToast(message, tone = 'info') {
 }
 
 function setConnectionState(isConnected) {
+  if (sessionReplaced) isConnected = false;
   connected = isConnected;
   if (isConnected) hasConnected = true;
-  elements.connectionLabel.textContent = isConnected
+  elements.connectionLabel.textContent = sessionReplaced
+    ? 'Room opened in another tab. Reload this page to take control here.'
+    : isConnected
     ? ''
     : hasConnected ? 'Connection lost. Reconnecting…' : 'Connecting…';
   elements.createRoomButton.disabled = !isConnected || resuming;
@@ -203,6 +344,9 @@ function setConnectionState(isConnected) {
   elements.joinRoomButton.disabled = !isConnected || resuming || joining;
   document.querySelectorAll('.public-game-row').forEach((row) => {
     row.disabled = !isConnected || resuming;
+  });
+  document.querySelectorAll('[data-replay-game-id]').forEach((button) => {
+    button.disabled = !isConnected || resuming;
   });
   document.body.classList.toggle('is-offline', !isConnected);
 }
@@ -213,7 +357,7 @@ function request(eventName, payload = {}, { allowWhileResuming = false } = {}) {
   return new Promise((resolve, reject) => {
     socket.timeout(8000).emit(eventName, payload, (timeoutError, response) => {
       if (timeoutError) {
-        reject(new Error('The server took too long to respond. Try again.'));
+        reject(Object.assign(new Error('The server took too long to respond. Try again.'), { code: 'REQUEST_TIMEOUT' }));
         return;
       }
       if (!response?.ok) {
@@ -225,6 +369,15 @@ function request(eventName, payload = {}, { allowWhileResuming = false } = {}) {
       resolve(response);
     });
   });
+}
+
+async function requestRoomSession(eventName, payload = {}) {
+  try {
+    return await request(eventName, payload);
+  } catch (error) {
+    if (error.code !== 'REQUEST_TIMEOUT') throw error;
+    return request(eventName, payload);
+  }
 }
 
 async function runAction(action, { quiet = false, lock = true, onError } = {}) {
@@ -373,6 +526,7 @@ function manageDialogFocus(previousDialogKey, focusSelector) {
 }
 
 function renderPublicLobby() {
+  renderGameHistory();
   elements.landingScreen.classList.toggle('is-invite', Boolean(inviteRoomCode));
   elements.landingTitle.textContent = inviteRoomCode ? 'Join game' : 'Game lobby';
   elements.inviteIntro.hidden = !inviteRoomCode;
@@ -589,9 +743,10 @@ function renderHostLobby() {
           ${previewCategories.map((category) => `<div class="lobby-preview-category" aria-hidden="true">${escapeHtml(category)}</div>`).join('')}
         </div>
         <div class="lobby-preview-status">
-          <span>${preferredGame ? '30 clues · 6 categories · Final Jeopardy' : 'Select a row in the archive to use that episode.'}</span>
+          <span>${preferredGame ? preferredGame.roundCount === 2 ? '60 clues · 2 rounds · Final Jeopardy' : '30 clues · 6 categories · Final Jeopardy' : 'Select a row in the archive to use that episode.'}</span>
           ${!connectedPlayers ? '<span>Add a player to start.</span>' : ''}
         </div>
+        ${preferredGame?.doubleJeopardyCategories?.length ? `<div class="lobby-second-round"><strong>Double Jeopardy</strong><p>${escapeHtml(preferredGame.doubleJeopardyCategories.join(' · '))}</p></div>` : ''}
       </section>
 
       <aside class="lobby-room">
@@ -619,7 +774,7 @@ function renderHostLobby() {
             : `<h2>Playing too?</h2>
               <form class="host-contestant-form" id="host-contestant-form">
                 <label class="sr-only" for="host-contestant-name">Your name</label>
-                <input id="host-contestant-name" name="name" maxlength="24" autocomplete="nickname" value="${escapeAttr(drafts.hostName ?? localStorage.getItem(NAME_KEY) ?? '')}" placeholder="Your name" required>
+                <input id="host-contestant-name" name="name" maxlength="24" autocomplete="nickname" value="${escapeAttr(drafts.hostName ?? savedName())}" placeholder="Your name" required>
                 <button class="button button-primary" type="submit" ${roomState.players.length >= 8 ? 'disabled' : ''}>${roomState.players.length >= 8 ? 'Room is full' : 'Join as player'}</button>
               </form>
               <p>Or stay on this screen to host.</p>`}
@@ -718,6 +873,7 @@ function renderBoardGrid() {
       data-action="open-clue"
       data-category-index="${categoryIndex}"
       data-clue-index="${clueIndex}"
+      data-round="${escapeAttr(roomState.round || 'jeopardy')}"
       ${unavailable ? 'disabled' : ''}
       aria-label="${escapeAttr(category.name)}, ${formatMoney(clue.value)}${clue.answered ? ', answered' : ''}"
     ><span>${clue.answered ? '' : formatMoney(clue.value)}</span></button>`;
@@ -739,6 +895,7 @@ function renderBoardGrid() {
 }
 
 function renderHostBoardControls() {
+  const twoRounds = roomState.game.hasDoubleJeopardy;
   const hasFinalist = roomState.players.some((player) => player.score > 0);
   const finalDisabledReason = roomState.currentClue
     ? 'Finish the active clue first'
@@ -749,7 +906,9 @@ function renderHostBoardControls() {
     <div class="host-toolbar">
       <button class="button button-secondary" type="button" data-action="return-lobby">Boards</button>
       <button class="button button-secondary" type="button" data-action="reset-game">Reset</button>
-      <button class="button button-gold" type="button" data-action="start-final" ${finalDisabledReason ? `disabled title="${escapeAttr(finalDisabledReason)}"` : ''}>Final →</button>
+      ${twoRounds
+        ? `<button class="button button-gold" type="button" data-action="next-round" data-round="${escapeAttr(roomState.round)}" ${roomState.canStartNextRound ? '' : 'disabled title="Finish this board first"'}>${roomState.round === 'double' && !hasFinalist ? 'Final standings' : escapeHtml(roomState.nextRoundName)} →</button>`
+        : `<button class="button button-gold" type="button" data-action="start-final" ${finalDisabledReason ? `disabled title="${escapeAttr(finalDisabledReason)}"` : ''}>Final →</button>`}
     </div>`;
 }
 
@@ -782,7 +941,7 @@ function renderDailyWager(clue) {
     drafts.dailyWager = String(clue.boardValue);
   }
   const selectedPlayer = playerById(drafts.dailyPlayerId);
-  const maxWager = Math.max(selectedPlayer?.score || 0, 1000);
+  const maxWager = Math.max(selectedPlayer?.score || 0, roomState.game?.dailyDoubleFloor || 1000);
   return `
     <div class="clue-overlay" role="dialog" aria-modal="true" aria-labelledby="daily-title">
       <form class="clue-stage daily-stage" id="daily-wager-form" tabindex="-1">
@@ -918,7 +1077,7 @@ function renderPlayerClue(clue) {
         <div class="clue-stage player-clue-stage daily-stage" tabindex="-1">
           <p class="daily-banner">Daily Double</p>
           <h2 id="player-daily-title">${choosingPlayer?.id === roomState.you?.id ? 'This Daily Double is yours.' : choosingPlayer ? `${escapeHtml(choosingPlayer.name)} is wagering.` : 'The host is setting the wager.'}</h2>
-          <p class="waiting-copy">${choosingPlayer?.id === roomState.you?.id ? `Say your wager aloud, up to ${formatMoney(Math.max(roomState.you.score, 1000))}. The room creator will enter it.` : 'The clue appears when the wager is locked.'}</p>
+          <p class="waiting-copy">${choosingPlayer?.id === roomState.you?.id ? `Say your wager aloud, up to ${formatMoney(Math.max(roomState.you.score, roomState.game?.dailyDoubleFloor || 1000))}. The room creator will enter it.` : 'The clue appears when the wager is locked.'}</p>
         </div>
       </div>`;
   }
@@ -983,14 +1142,18 @@ function renderBoard() {
   const choosingPlayer = playerById(roomState.controlPlayerId);
   const everyonePlays = roomState.players.some((player) => player.isHost);
   const finished = answeredCount === allClues.length;
+  const nextRound = roomState.nextRoundName || 'Final Jeopardy';
+  const noFinalists = nextRound === 'Final Jeopardy' && !roomState.players.some((player) => player.score > 0);
   return `
     <div class="game-shell">
       <div class="game-main">
         <header class="game-titlebar">
-          <div><p class="panel-label">Board · ${answeredCount}/${allClues.length} played</p><h2 tabindex="-1">${escapeHtml(roomState.game.title)}</h2></div>
+          <div><p class="panel-label">${escapeHtml(roomState.roundName || 'Jeopardy')} · ${answeredCount}/${allClues.length} played</p><h2 tabindex="-1">${escapeHtml(roomState.game.title)}</h2></div>
           ${roomState.role === 'host' ? renderHostBoardControls() : `<div class="player-score-chip"><span>Your score</span><strong>${formatMoney(roomState.you?.score)}</strong></div>`}
         </header>
-        ${finished ? `<section class="board-finished"><h3>That's the board.</h3><p>${roomState.role === 'host' ? 'Head to Final Jeopardy, or choose another game.' : 'The room creator can start Final Jeopardy or choose another game.'}</p></section>` : `
+        ${finished ? `<section class="board-finished" role="status"><h3>${escapeHtml(roomState.roundName || 'Jeopardy')} complete</h3><p>${noFinalists
+          ? roomState.game.hasDoubleJeopardy ? 'No positive scores. The host can show the final standings.' : 'No positive scores. Adjust a score or choose another game.'
+          : roomState.role === 'host' ? `Continue to ${escapeHtml(nextRound)}.` : `Waiting for the host to start ${escapeHtml(nextRound)}.`}</p></section>` : `
           <div class="board-turn-strip ${roomState.canChooseClue ? 'is-your-turn' : ''}">
             <strong>${roomState.canChooseClue ? 'Your pick' : choosingPlayer ? `${escapeHtml(choosingPlayer.name)} picks next` : everyonePlays ? 'Waiting for a player' : 'Host picks the next clue'}</strong>
           </div>`}
@@ -1055,7 +1218,8 @@ function renderFinalHost(final) {
 }
 
 function renderFinalStandings() {
-  const ranked = [...roomState.players].sort((first, second) => second.score - first.score);
+  const completed = roomState.completedGames?.find((game) => game.id === roomState.gameRunId);
+  const ranked = [...(completed?.players || roomState.players)].sort((first, second) => second.score - first.score);
   return `
     <div class="final-panel standings-panel">
       <p class="final-wordmark">FINAL SCORES</p>
@@ -1067,6 +1231,7 @@ function renderFinalStandings() {
           </article>`;
         }).join('')}
       </div>
+      ${completed ? `<p class="history-save-note">${historyStorageUnavailable ? 'This result could not be saved to your browser. Keep this page open to retain it.' : 'Saved to Past games in the lobby on this browser.'}</p>` : ''}
       ${roomState.role === 'host' ? '<button class="button button-gold button-large" type="button" data-action="return-lobby">Choose another game</button>' : '<p class="waiting-copy">The host can start another game from here.</p>'}
     </div>`;
 }
@@ -1221,8 +1386,9 @@ function renderRoom() {
 }
 
 function render() {
+  rememberCompletedGames(roomState);
   const inRoom = Boolean(roomState);
-  const screenKey = inRoom ? `${roomState.code}:${roomState.phase}` : 'landing';
+  const screenKey = inRoom ? `${roomState.code}:${roomState.phase}:${roomState.round || ''}` : 'landing';
   elements.landingScreen.classList.toggle('hidden', inRoom);
   elements.roomScreen.classList.toggle('hidden', !inRoom);
   if (inRoom) renderRoom();
@@ -1237,7 +1403,7 @@ function render() {
 }
 
 async function createRoom(gameId = null, { buildCustom = false } = {}) {
-  const response = await runAction(() => request('room:create'));
+  const response = await runAction(() => requestRoomSession('room:create'));
   if (!response) return;
   roomState = response.state;
   preferredGameId = gameId || '';
@@ -1262,7 +1428,7 @@ async function joinRoom(form) {
   elements.joinRoomButton.textContent = 'Joining…';
   elements.joinRoomForm.ariaBusy = 'true';
   setConnectionState(connected);
-  const response = await runAction(() => request('room:join', { code, name }), {
+  const response = await runAction(() => requestRoomSession('room:join', { code, name }), {
     quiet: true,
     onError(error) {
       elements.joinError.textContent = error.message;
@@ -1284,7 +1450,7 @@ async function joinRoom(form) {
   preferredGameId = '';
   saveSession(response.session);
   shouldResumeOnConnect = true;
-  localStorage.setItem(NAME_KEY, name);
+  saveName(name);
   resetDrafts();
   render();
 }
@@ -1322,6 +1488,18 @@ elements.publicGameList.addEventListener('click', (event) => {
   const row = event.target.closest('[data-public-game-id]');
   if (!row || row.disabled) return;
   void createRoom(row.dataset.publicGameId);
+});
+elements.historyList.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-replay-game-id]');
+  if (!button || button.disabled || roomState) return;
+  if (!publicGameCatalog.some((game) => game.id === button.dataset.replayGameId)) return;
+  void createRoom(button.dataset.replayGameId);
+});
+window.addEventListener('storage', (event) => {
+  if (event.key !== HISTORY_KEY && event.key !== null) return;
+  if (event.newValue === null) memoryHistory = [];
+  else rememberCompletedGames({ completedGames: parseGameHistory(event.newValue) });
+  if (!roomState) renderGameHistory();
 });
 elements.landingGameFilter.addEventListener('input', () => {
   landingGameFilter = elements.landingGameFilter.value;
@@ -1431,7 +1609,7 @@ elements.roomContent.addEventListener('change', (event) => {
   } else if (event.target.id === 'daily-player') {
     drafts.dailyPlayerId = event.target.value;
     const selected = playerById(drafts.dailyPlayerId);
-    const max = Math.max(selected?.score || 0, 1000);
+    const max = Math.max(selected?.score || 0, roomState.game?.dailyDoubleFloor || 1000);
     const wager = Number(drafts.dailyWager);
     if (!Number.isFinite(wager) || wager > max) drafts.dailyWager = String(max);
     renderRoom();
@@ -1444,7 +1622,7 @@ elements.roomContent.addEventListener('submit', (event) => {
     const name = event.target.elements.name.value.trim();
     void runAction(async () => {
       await request('host:join-contestants', { name });
-      localStorage.setItem(NAME_KEY, name);
+      saveName(name);
       drafts.hostName = name;
     });
   } else if (event.target.id === 'custom-game-form') {
@@ -1556,6 +1734,7 @@ elements.roomContent.addEventListener('click', (event) => {
     'open-clue': () => request(roomState.role === 'host' ? 'host:open-clue' : 'player:open-clue', {
       categoryIndex: Number(target.dataset.categoryIndex),
       clueIndex: Number(target.dataset.clueIndex),
+      round: target.dataset.round,
     }),
     'reveal-answer': () => request('host:reveal-answer'),
     'reset-buzzers': () => request('host:reset-buzzers'),
@@ -1588,6 +1767,7 @@ elements.roomContent.addEventListener('click', (event) => {
       }
     },
     'start-final': () => request('host:start-final'),
+    'next-round': () => request('host:next-round', { expectedRound: target.dataset.round }),
     'advance-final': async () => {
       const final = roomState.final;
       if (!final) return;
@@ -1617,6 +1797,7 @@ elements.roomContent.addEventListener('click', (event) => {
 
 socket.on('connect', () => {
   setConnectionState(true);
+  if (sessionReplaced) return;
   if (shouldResumeOnConnect && savedSession()) void resumeSavedSession();
   else render();
 });
@@ -1660,6 +1841,7 @@ socket.on('room:removed', ({ message }) => {
 });
 
 socket.on('room:replaced', ({ message }) => {
+  sessionReplaced = true;
   roomState = null;
   resetDrafts();
   render();
@@ -1671,7 +1853,7 @@ async function boot() {
   const inviteCode = roomCode?.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5) || '';
   inviteRoomCode = inviteCode;
   if (inviteCode) elements.joinCode.value = inviteCode;
-  elements.joinName.value = localStorage.getItem(NAME_KEY) || '';
+  elements.joinName.value = savedName();
   const session = savedSession();
   if (inviteCode && session?.code && inviteCode !== session.code) {
     shouldResumeOnConnect = false;

@@ -8,8 +8,8 @@ The public site runs on Render's free plan, so the first visit after inactivity 
 
 The game can load real historical boards from the compressed archive maintained
 by [howardchung/jeopardy](https://github.com/howardchung/jeopardy). By default it
-serves every complete playable episode, including its Daily Double and Final
-Jeopardy clues. The original 20 boards remain as an offline fallback.
+serves complete text-playable episodes with both boards, their original Daily
+Doubles, and Final Jeopardy. The original 20 single-round boards remain as an offline fallback.
 
 ## What it does
 
@@ -22,7 +22,8 @@ Jeopardy clues. The original 20 boards remain as an offline fallback.
 - Reopens buzzing after an incorrect response while locking out that player for the clue
 - Supports host-assigned Daily Double contestants and wagers
 - Runs private Final Jeopardy wagers, written responses, and contestant self-judging
-- Restores host and player sessions after an ordinary Wi-Fi interruption
+- Restores host and player sessions after Wi-Fi interruptions and server restarts
+- Keeps the last 100 completed games in each browser, with dates, final scores, and replay for boards still in the archive
 - Includes thousands of complete archived games spanning decades of Jeopardy
 - Filters the archive by broadcast year and supports room-scoped custom boards
 
@@ -92,18 +93,22 @@ Player laptop ┘                     │
 
 The server validates identity, active clue, buzz position, and score transitions before broadcasting a role-specific state update. Only the active contestant receives a private clue answer. Final Jeopardy wagers and written responses remain private to their owners; the dedicated host receives progress status.
 
-Rooms live in memory. A fully disconnected room expires after 12 hours of inactivity, while a room with at least one connected device remains active. Stopping the Node.js process ends all rooms; scores and progress are intentionally not written to disk.
+Room changes are saved before the server confirms them. Restarting restores room codes, scores, board progress, wagers, and responses; players reconnect with their existing tab credentials. A fully disconnected room expires after 12 hours. The selected episode is saved with the room so archive updates cannot change a game already in progress.
+
+Past games are saved on each participating browser when it receives the final standings. Results remain after leaving a room, but do not sync across devices and are removed when browser site data is cleared. A returning player can recover missed results while the room still exists; closing the room removes that server copy. History stores player names and scores, not credentials or private answers.
+
+Locally, `npm start` saves to `data/rooms/saved-games.json`, which is private to the server and excluded from Git. Set `JEOPARDY_SAVE_PATH` to change that location. On Render, set the private `DATABASE_URL` environment variable to a PostgreSQL connection string. Local files on Render are temporary, so startup requires the database rather than silently using them for saves. Use the database provider's TLS connection string and run one server instance; conflicting writers are rejected to prevent overwriting newer games.
 
 ## Question bank
 
 Run `npm run build` to download Howard's roughly 30 MB compressed archive and
-prepare all complete playable episodes in `data/archive/howard-playable.json`.
+prepare complete two-round episodes in `data/archive/howard-playable.json`.
 Both generated files are gitignored. The server loads the prepared bank at
-startup; an older local installation with only the compressed archive still works.
+startup; old caches are rebuilt from the compressed archive. Episodes with identifiable missing-media references are excluded. This uses clue and category text, so it is not an exhaustive review of every clue.
 
 Render runs the syntax checks and test suite before each build, then starts one
-Node.js instance with `npm start` and checks `/health`. Deploys and server restarts
-end current multiplayer rooms.
+Node.js instance with `npm start` and checks `/health`. Configure `DATABASE_URL`
+before deploying this version so multiplayer rooms survive restarts.
 
 ```bash
 JEOPARDY_ARCHIVE_LIMIT=1000 npm start  # newest 1,000 playable episodes
@@ -113,12 +118,13 @@ JEOPARDY_ARCHIVE_LIMIT=0 npm start     # full playable archive (the default)
 If the archive file is absent, the server loads the original bank in
 [`data/games`](data/games).
 
-Archived boards contain text only. Some clues refer to images or audio from the
-original broadcast that are not included; use **Skip clue** for those questions.
+Archived boards contain text only. If a media-dependent clue slips through the
+filter, use **Skip clue**; skipping never changes scores.
 
-Each game requires exactly six categories, five clues per category, one Daily
-Double, and one Final Jeopardy clue. This abbreviated example shows the object
-shape:
+The first board requires six categories with five clues each and one Daily Double.
+The optional `doubleJeopardy.categories` board has the same shape, values from
+$400 to $2,000, and two Daily Doubles. Every game includes Final Jeopardy.
+This abbreviated example shows a single-round game's shape:
 
 ```json
 {
