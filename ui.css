@@ -208,6 +208,106 @@ h3 {
 .landing.is-invite .join-form { grid-template-columns: 1fr; gap: 20px; }
 .landing.is-invite :is(.landing-heading-actions, #join-title, .public-game-browser, .landing-address, .site-footnote, .history-panel) { display: none; }
 .landing.is-invite .join-form input { height: 48px; font-size: 1rem; }
+.resume-panel {
+  margin: 0 0 28px;
+  padding: 20px;
+  background: var(--midnight);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.resume-panel[hidden] { display: none; }
+.resume-panel h2 {
+  margin: 0 0 6px;
+  color: var(--white);
+  font: 600 1rem/1.3 var(--body);
+}
+#saved-rooms-note {
+  margin: 0 0 12px;
+  color: var(--ink-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+.resume-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+.resume-row:last-child { padding-bottom: 0; }
+.resume-copy { min-width: 0; }
+.resume-copy strong,
+.resume-copy small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.resume-copy strong { font-size: 0.875rem; font-weight: 600; line-height: 1.4; }
+.resume-copy small { margin-top: 3px; color: var(--ink-muted); font-size: 0.75rem; line-height: 1.5; }
+.game-mode-field {
+  display: grid;
+  gap: 6px;
+  width: min(100%, 280px);
+  margin: 0 0 16px;
+  font-size: 0.8rem;
+}
+.game-mode-field select { width: 100%; min-width: 0; min-height: 44px; padding: 9px 12px; }
+.score-undo-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-light);
+  color: var(--ink-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+.score-undo-bar > :first-child { min-width: 0; overflow-wrap: anywhere; }
+.score-undo-bar button { flex-shrink: 0; min-height: 44px; }
+.host-handoff {
+  margin: 16px 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.host-handoff > summary {
+  width: fit-content;
+  min-height: 44px;
+  padding: 12px 0;
+  color: var(--ink-muted);
+  font-size: 0.8rem;
+  line-height: 20px;
+  cursor: pointer;
+}
+.host-handoff > summary:hover { color: var(--white); }
+.host-handoff p {
+  margin: 8px 0 0;
+  color: var(--ink-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+#host-transfer-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  max-width: 520px;
+}
+#host-transfer-form label { display: grid; flex: 1 1 160px; gap: 6px; min-width: 0; }
+#host-transfer-form select { flex: 1 1 160px; width: 100%; min-width: 0; min-height: 44px; padding: 9px 12px; }
+#host-transfer-form button { flex-shrink: 0; }
+@media (max-width: 480px) {
+  .resume-panel { padding: 16px; margin-bottom: 24px; }
+  .resume-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .resume-copy { grid-column: 1 / -1; }
+  .resume-row .button { justify-self: start; }
+  .resume-row .text-button { justify-self: end; }
+  .score-undo-bar { align-items: flex-start; }
+  .score-undo-bar > :first-child { align-self: center; }
+}
 .history-panel {
   margin: 0 0 28px;
   border-top: 1px solid var(--line);
