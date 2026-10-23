@@ -56,6 +56,8 @@ function element() {
 function storage() {
   const values = new Map();
   return {
+    get length() { return values.size; },
+    key: (index) => [...values.keys()][index] ?? null,
     getItem: (key) => values.get(key) ?? null,
     setItem: (key, value) => values.set(key, String(value)),
     removeItem: (key) => values.delete(key),
@@ -133,6 +135,22 @@ test('a closed-tab seat is offered explicitly and its credential never appears i
   assert.equal(second.evaluate('resumePayload.token'), session.token);
   assert.equal(second.evaluate('savedSession().token'), session.token);
   assert.equal(second.evaluate('roomState.you.name'), 'Alex');
+});
+
+test('saved-seat storage events refresh the Continue list in another tab', () => {
+  const localStore = storage();
+  const client = startClient(undefined, { localStore });
+  const session = new RoomManager({ games: loadGames() }).createRoom('host');
+  const store = require('../room-sessions').createStore(localStore);
+  assert.equal(client.node('#saved-rooms').hidden, true);
+  store.save({ ...session, name: 'Alex' });
+  const storageKey = `jeoparty_saved_seat_v2:${session.code}:${session.token}`;
+  client.evaluate(`window.dispatch('storage', { key: ${JSON.stringify(storageKey)} });`);
+  assert.equal(client.node('#saved-rooms').hidden, false);
+  assert.match(client.node('#saved-rooms-list').innerHTML, /Alex/);
+  store.forget(session);
+  client.evaluate(`window.dispatch('storage', { key: ${JSON.stringify(storageKey)} });`);
+  assert.equal(client.node('#saved-rooms').hidden, true);
 });
 
 test('Continue saves its credential before the request so an interrupted rejoin can reconnect', async () => {

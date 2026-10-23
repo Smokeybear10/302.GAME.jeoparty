@@ -1583,7 +1583,7 @@ elements.savedRoomsList.addEventListener('click', (event) => {
   }
 });
 window.addEventListener('storage', (event) => {
-  if (!roomState && (event.key === 'jeoparty_saved_rooms_v1' || event.key === null)) renderSavedRooms();
+  if (!roomState && (event.key?.startsWith('jeoparty_saved_seat_v2:') || event.key === null)) renderSavedRooms();
 });
 window.addEventListener('storage', (event) => {
   if (event.key !== HISTORY_KEY && event.key !== null) return;
