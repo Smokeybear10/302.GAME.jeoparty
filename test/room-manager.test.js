@@ -739,3 +739,150 @@ test('rejects player attempts to use host actions', () => {
     (error) => error.code === 'CONTESTANT_ONLY',
   );
 });
+
+function setupDoubleRoom({ creatorPlays = false } = {}) {
+  const game = structuredClone(loadGames()[0]);
+  game.doubleJeopardy = {
+    categories: Array.from({ length: 6 }, (_, categoryIndex) => ({
+      name: `DOUBLE CATEGORY ${categoryIndex + 1}`,
+      clues: Array.from({ length: 5 }, (_, clueIndex) => ({
+        value: (clueIndex + 1) * 400,
+        clue: `Second-round clue ${categoryIndex}-${clueIndex}`,
+        answer: `Second-round answer ${categoryIndex}-${clueIndex}`,
+        dailyDouble: categoryIndex < 2 && clueIndex === 0,
+      })),
+    })),
+  };
+  const manager = new RoomManager({ games: [game] });
+  const host = manager.createRoom('host');
+  if (creatorPlays) manager.joinHostAsPlayer('host', { name: 'Creator' });
+  const first = manager.joinRoom('player-1', { code: host.code, name: 'Maya' });
+  const second = manager.joinRoom('player-2', { code: host.code, name: 'Theo' });
+  manager.startGame('host', game.id);
+  const state = (socket = 'host') => manager.stateFor(socket, catalogGames([game]));
+  return { manager, game, host, first, second, state };
+}
+
+function finishBoard(manager, state) {
+  const board = state().game;
+  for (let categoryIndex = 0; categoryIndex < board.categories.length; categoryIndex += 1) {
+    for (let clueIndex = 0; clueIndex < board.categories[categoryIndex].clues.length; clueIndex += 1) {
+      if (board.categories[categoryIndex].clues[clueIndex].answered) continue;
+      const controller = ['host', 'player-1', 'player-2'].find((socket) => state(socket).canChooseClue);
+      manager.openClue(controller, { categoryIndex, clueIndex, round: state().round });
+      manager.skipClue('host');
+    }
+  }
+}
+
+test('Double Jeopardy starts only after the first board and carries scores onto a fresh board', () => {
+  const { manager, first, second, state } = setupDoubleRoom({ creatorPlays: true });
+  manager.adjustScore('host', { playerId: first.playerId, delta: 1200 });
+  manager.adjustScore('host', { playerId: second.playerId, delta: -400 });
+  assert.equal(state().round, 'jeopardy');
+  assert.equal(state().nextRoundName, 'Double Jeopardy');
+  assert.equal(state().canStartNextRound, false);
+  assert.throws(() => manager.advanceRound('host', { expectedRound: 'jeopardy' }), { code: 'ROUND_INCOMPLETE' });
+  assert.throws(() => manager.startFinal('host'), { code: 'DOUBLE_JEOPARDY_PENDING' });
+  finishBoard(manager, state);
+  assert.equal(state().canStartNextRound, true);
+  manager.advanceRound('host', { expectedRound: 'jeopardy' });
+
+  const next = state();
+  assert.equal(next.round, 'double');
+  assert.equal(next.roundName, 'Double Jeopardy');
+  assert.equal(next.nextRoundName, 'Final Jeopardy');
+  assert.equal(next.controlPlayerId, second.playerId);
+  assert.equal(next.game.remainingClues, 30);
+  assert.equal(next.game.dailyDoubleFloor, 2000);
+  assert.deepEqual(next.players.map((player) => player.score), [0, 1200, -400]);
+  assert.deepEqual(next.game.categories[0].clues.map((clue) => clue.value), [400, 800, 1200, 1600, 2000]);
+  assert.equal(next.game.categories.flatMap((category) => category.clues).every((clue) => !clue.answered), true);
+  assert.equal(next.canStartNextRound, false);
+  assert.equal(next.game.categories.some((category) => category.clues.some((clue) => 'answer' in clue || 'dailyDouble' in clue)), false);
+  assert.throws(() => manager.advanceRound('host', { expectedRound: 'jeopardy' }), { code: 'STALE_ROUND' });
+  assert.throws(() => manager.startFinal('host'), { code: 'ROUND_INCOMPLETE' });
+});
+
+test('Double Jeopardy selects the first connected lowest scorer when scores tie', () => {
+  const { manager, first, state } = setupDoubleRoom({ creatorPlays: true });
+  const creatorId = state().you.id;
+  manager.adjustScore('host', { playerId: creatorId, delta: 1000 });
+  finishBoard(manager, state);
+  manager.advanceRound('host', { expectedRound: 'jeopardy' });
+  assert.equal(state().controlPlayerId, first.playerId);
+});
+
+test('second-round Daily Doubles accept wagers up to $2000 and preserve answer privacy', () => {
+  const { manager, first, game, state } = setupDoubleRoom();
+  finishBoard(manager, state);
+  manager.advanceRound('host', { expectedRound: 'jeopardy' });
+  manager.openClue('host', { categoryIndex: 0, clueIndex: 0, round: 'double' });
+  assert.equal(state().currentClue.question, null);
+  assert.throws(() => manager.setDailyDouble('host', { playerId: first.playerId, wager: 2001 }), { code: 'INVALID_WAGER' });
+  manager.setDailyDouble('host', { playerId: first.playerId, wager: 2000 });
+  const { clueKey } = state().currentClue;
+  assert.equal(clueKey, 'double:0:0');
+  assert.equal(state().currentClue.question, game.doubleJeopardy.categories[0].clues[0].clue);
+  manager.openPlayerAnswer('player-1', { clueKey });
+  assert.equal(state('player-1').currentClue.privateAnswer, game.doubleJeopardy.categories[0].clues[0].answer);
+  assert.equal(Object.hasOwn(state().currentClue, 'privateAnswer'), false);
+  assert.equal(Object.hasOwn(state('player-2').currentClue, 'privateAnswer'), false);
+  manager.selfScoreClue('player-1', { clueKey, correct: true });
+  assert.equal(state('player-1').you.score, 2000);
+  assert.equal(state().game.categories[0].clues[0].answered, true);
+});
+
+test('old round selections and judgments cannot affect matching tiles in Double Jeopardy', () => {
+  const { manager, first, host, state } = setupDoubleRoom();
+  manager.openClue('host', { categoryIndex: 2, clueIndex: 1, round: 'jeopardy' });
+  const oldKey = state().currentClue.clueKey;
+  manager.skipClue('host');
+  finishBoard(manager, state);
+  manager.advanceRound('host', { expectedRound: 'jeopardy' });
+  assert.throws(() => manager.openClue('host', { categoryIndex: 2, clueIndex: 1, round: 'jeopardy' }), { code: 'STALE_ROUND' });
+  manager.openClue('host', { categoryIndex: 2, clueIndex: 1, round: 'double' });
+  manager.buzz('player-1');
+  assert.throws(() => manager.openPlayerAnswer('player-1', { clueKey: oldKey }), { code: 'STALE_CLUE' });
+  assert.throws(() => manager.skipPlayerClue('player-1', { clueKey: oldKey }), { code: 'STALE_CLUE' });
+  const { clueKey } = state().currentClue;
+  manager.openPlayerAnswer('player-1', { clueKey });
+  assert.throws(() => manager.selfScoreClue('player-1', { clueKey: oldKey, correct: true }), { code: 'STALE_CLUE' });
+  manager.disconnect('player-1');
+  manager.resumeRoom('player-returned', { code: host.code, token: first.token });
+  assert.equal(state('player-returned').round, 'double');
+  assert.equal(state('player-returned').currentClue.clueKey, clueKey);
+  assert.match(state('player-returned').currentClue.privateAnswer, /^Second-round answer/);
+  manager.selfScoreClue('player-returned', { clueKey, correct: true });
+  assert.equal(state('player-returned').you.score, 800);
+});
+
+test('completed Double Jeopardy advances to Final and reset returns to the first board', () => {
+  const { manager, first, state } = setupDoubleRoom();
+  manager.adjustScore('host', { playerId: first.playerId, delta: 1200 });
+  finishBoard(manager, state);
+  manager.advanceRound('host', { expectedRound: 'jeopardy' });
+  finishBoard(manager, state);
+  assert.equal(state().canStartNextRound, true);
+  manager.advanceRound('host', { expectedRound: 'double' });
+  assert.equal(state().phase, 'final');
+  assert.equal(state().final.phase, 'wager');
+  assert.equal(state('player-1').final.yourMaxWager, 1200);
+  manager.resetGame('host');
+  assert.equal(state().round, 'jeopardy');
+  assert.equal(state().game.dailyDoubleFloor, 1000);
+  assert.equal(state().game.remainingClues, 30);
+  assert.equal(state().players.every((player) => player.score === 0), true);
+});
+
+test('completed Double Jeopardy ends cleanly when nobody qualifies for Final', () => {
+  const { manager, state } = setupDoubleRoom();
+  finishBoard(manager, state);
+  manager.advanceRound('host', { expectedRound: 'jeopardy' });
+  finishBoard(manager, state);
+  assert.equal(state().canStartNextRound, true);
+  manager.advanceRound('host', { expectedRound: 'double' });
+  assert.equal(state().phase, 'final');
+  assert.equal(state().final.phase, 'complete');
+  assert.deepEqual(state().final.submissions, []);
+});

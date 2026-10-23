@@ -28,8 +28,9 @@ function renderClue(clueOverrides = {}, { isConnected = true, hostConnected = tr
   };
   const context = vm.createContext({
     document: { body: node('body'), querySelector: node, querySelectorAll: () => [], addEventListener() {} },
-    window: { location: { origin: 'http://127.0.0.1:3000', hostname: '127.0.0.1', search: '' } },
+    window: { location: { origin: 'http://127.0.0.1:3000', hostname: '127.0.0.1', search: '' }, addEventListener() {} },
     io: () => ({ on() {}, connect() {} }),
+    RoomSessions: require('../room-sessions'),
     localStorage: { getItem: () => null }, sessionStorage: { getItem: () => null },
     URLSearchParams, AbortSignal, fetch: () => new Promise(() => {}),
     fixtureRoom: { phase: 'board', role, you, players: [you, other], hostConnected, currentClue },

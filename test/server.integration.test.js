@@ -127,6 +127,43 @@ test('HTTP and Socket.IO clients can host, join, start, and buzz without leaking
   await hostSawScore;
 });
 
+test('malformed removal requests leave the server and existing room usable', async (context) => {
+  const jeopardy = createJeopardyServer({ games: loadGames(), logger: { error() {} } });
+  const address = await jeopardy.start(0, '127.0.0.1');
+  const origin = `http://127.0.0.1:${address.port}`;
+  const sockets = Array.from({ length: 3 }, () => createClient(origin, { transports: ['websocket'], forceNew: true }));
+  const [host, player, stranger] = sockets;
+
+  context.after(async () => {
+    sockets.forEach((socket) => socket.disconnect());
+    await jeopardy.stop();
+  });
+
+  const created = await emitAck(host, 'room:create');
+  const joined = await emitAck(player, 'room:join', { code: created.session.code, name: 'Jordan' });
+
+  await assert.rejects(
+    emitAck(stranger, 'host:remove-player', null),
+    (error) => error.code === 'NOT_IN_ROOM',
+  );
+  await assert.rejects(
+    emitAck(host, 'host:remove-player', null),
+    (error) => error.code === 'PLAYER_NOT_FOUND',
+  );
+  await assert.rejects(
+    emitAck(player, 'host:remove-player', { playerId: joined.session.playerId }),
+    (error) => error.code === 'HOST_ONLY',
+  );
+
+  const health = await fetch(`${origin}/health`).then((response) => response.json());
+  assert.deepEqual(health, { ok: true, games: 20, rooms: 1 });
+  assert.equal(jeopardy.rooms.rooms.get(created.session.code).players.length, 1);
+
+  const hostSawRemoval = nextState(host, (state) => state.players.length === 0);
+  await emitAck(host, 'host:remove-player', { playerId: joined.session.playerId });
+  await hostSawRemoval;
+});
+
 test('stable resume credentials recover from a lost acknowledgement and keep host-offline buzzes authoritative', async (context) => {
   const games = loadGames();
   const jeopardy = createJeopardyServer({ games, logger: { error() {} } });
