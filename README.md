@@ -24,8 +24,10 @@ Doubles, and Final Jeopardy. The original 20 single-round boards remain as an of
 - Runs private Final Jeopardy wagers, written responses, and contestant self-judging
 - Offers full episodes or quick games: any 15 clues from the first board, then Final Jeopardy
 - Lets the host undo the latest scoring decision or pass hosting to another connected player
-- Restores host and player sessions after interruptions, closed tabs, and server restarts
+- Restores host and player sessions after interruptions, closed tabs, and server restarts, with retries and a manual recovery button
+- Lets an existing contestant take over when the host has been disconnected for a minute
 - Keeps the last 100 completed games in each browser, with dates, final scores, and replay for boards still in the archive
+- Saves completed results independently of rooms, with private links that open on another device
 - Includes thousands of complete archived games spanning decades of Jeopardy
 - Filters the archive by broadcast year and supports room-scoped custom boards
 
@@ -37,8 +39,8 @@ Doubles, and Final Jeopardy. The original 20 single-round boards remain as an of
 ## Start the server
 
 ```bash
-git clone https://github.com/Smokeybear10/303.GAME.jeoparty.git
-cd 303.GAME.jeoparty
+git clone https://github.com/Smokeybear10/302.GAME.jeoparty.git
+cd 302.GAME.jeoparty
 npm install
 npm run fetch:archive
 npm start
@@ -71,7 +73,7 @@ PORT=8080 npm start
 
 The host can adjust scores manually, reset buzzers before an answer check starts, show an unclaimed answer on contestant screens, close clues, remove players, reset the board, or return to the game library.
 
-**Undo last score** restores the latest contestant scoring decision and its private answer check. It is available until the next successful room action, including someone joining or disconnecting. **Pass hosting** gives room controls to a connected player without changing scores or progress. A host who is playing stays as a contestant; a dedicated host leaves the room.
+**Undo last score** restores the latest contestant scoring decision and its private answer check. It is available until the next successful room action, including someone joining or disconnecting. **Pass hosting** gives room controls to a connected player without changing scores or progress. A host who is playing stays as a contestant; a dedicated host leaves the room. If the host disconnects for 60 seconds, a contestant who was already in the room can select **Take over hosting**. A returning former host can rejoin as a contestant if they were playing; a former dedicated host loses room access.
 
 ### Answer privacy
 
@@ -101,7 +103,7 @@ Room changes are saved before the server confirms them. Restarting restores room
 
 After closing a tab, open the site in the same browser and select **Continue** under **Continue a game**. The list shows up to 12 recent seats and hides entries after 12 hours without an update. Each seat is saved separately so tabs cannot overwrite each other's recovery details. Continuing moves that seat from any other open tab; opening a new tab alone does not. No account is needed. **Forget**, leaving the room, or clearing browser site data removes that saved seat. If browser storage is blocked, closed-tab recovery is unavailable.
 
-Past games are saved on each participating browser when it receives the final standings. Results remain after leaving a room, but do not sync across devices and are removed when browser site data is cleared. A returning player can recover missed results while the room still exists; closing the room removes that server copy. History stores player names and scores, not credentials or private answers.
+Past games lists the last 100 results saved in that browser. New completed results are also stored separately on the server and remain after the room is closed or expires. Open **Saved results & private link** to copy a link or save a shared result to another browser. Anyone with that link can read the player names and final scores; it provides no room access, private answers, or wagers. Clearing browser data removes the local list, so keep the results links you want to recover. Older browser-only results cannot be recovered from the server once their original room has expired.
 
 Locally, `npm start` saves to `data/rooms/saved-games.json`, which is private to the server and excluded from Git. Set `JEOPARDY_SAVE_PATH` to change that location. On Render, set the private `DATABASE_URL` environment variable to a PostgreSQL connection string. Local files on Render are temporary, so startup requires the database rather than silently using them for saves. Use the database provider's TLS connection string and run one server instance; conflicting writers are rejected to prevent overwriting newer games.
 
@@ -197,7 +199,7 @@ See the [changelog](CHANGELOG.md) for release history.
 - Guest Wi-Fi and some corporate or school networks block devices from talking to each other. Use a normal home network or a phone hotspot if players cannot connect.
 - Keep the terminal running for the entire game.
 
-This server is intended for a trusted local network. The room code is convenient game-night access, not production-grade authentication; do not expose the server directly to the public internet.
+Share room codes with people you intend to play with. The server limits room creation, action bursts, queued writes, and transport connections. One instance holds up to 100 rooms and 400 connected transports, with at most 64 from one network address. These limits protect a small game server; they do not replace account-based access control.
 
 ## Disclaimer
 

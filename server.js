@@ -8,24 +8,77 @@ const { Server } = require('socket.io');
 const { catalogGames, loadPreferredGames } = require('./lib/game-store');
 const { RoomError, RoomManager } = require('./lib/room-manager');
 const { configuredRoomStore } = require('./lib/room-store');
+const { clientAddress, tokenBucket } = require('./lib/request-limits');
 
 const ROOT = __dirname;
 
-function createJeopardyServer({ games = loadPreferredGames(), logger = console, roomStore = null } = {}) {
+function createJeopardyServer({ games = loadPreferredGames(), logger = console, roomStore = null, limits = {}, now = Date.now, trustProxy = Boolean(process.env.RENDER) } = {}) {
   const app = express();
   const httpServer = http.createServer(app);
   const io = new Server(httpServer, {
     serveClient: true,
+    maxHttpBufferSize: 128 * 1024,
     transports: ['websocket', 'polling'],
+    allowRequest: admitTransport,
   });
   const gameCatalog = catalogGames(games);
-  const rooms = new RoomManager({ games });
+  const rooms = new RoomManager({ games, now });
+  const settings = { maxRooms: 100, maxConnections: 400, connectionsPerAddress: 64, maxPending: 128, actionBurst: 200, actionRate: 20, createBurst: 12, createRate: 1 / 60, ...limits };
+  const connectionLimits = tokenBucket({ capacity: 80, refillPerSecond: 2, now });
+  const createLimits = tokenBucket({ capacity: settings.createBurst, refillPerSecond: settings.createRate, now });
+  const actionLimits = tokenBucket({ capacity: settings.actionBurst, refillPerSecond: settings.actionRate, now });
+  const addressActions = tokenBucket({ capacity: 500, refillPerSecond: 100, now });
+  const resultReads = tokenBucket({ capacity: 30, refillPerSecond: 1, now });
+  const connections = new Map();
+  const transportAdmissions = new WeakMap();
+  const pendingAdmissions = new Set();
+  let connectionCount = 0;
+  let pendingMutations = 0;
   let mutationQueue = Promise.resolve();
   let stopping = false;
   let storageFailure = null;
 
-  function mutateAndSave(mutate, { rollback = true, afterSave, onFailure } = {}) {
+  function admitTransport(request, callback) {
+    const address = clientAddress(request, trustProxy);
+    if (stopping || connectionCount >= settings.maxConnections || (connections.get(address) || 0) >= settings.connectionsPerAddress || !connectionLimits.take(address)) {
+      return callback('The game server is busy. Try connecting again in a moment.', false);
+    }
+    connectionCount += 1;
+    connections.set(address, (connections.get(address) || 0) + 1);
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      clearTimeout(timer);
+      request.socket.off('close', release);
+      pendingAdmissions.delete(release);
+      connectionCount -= 1;
+      const remaining = (connections.get(address) || 1) - 1;
+      if (remaining) connections.set(address, remaining);
+      else connections.delete(address);
+    };
+    const timer = setTimeout(release, 10000);
+    timer.unref();
+    request.socket.once('close', release);
+    pendingAdmissions.add(release);
+    transportAdmissions.set(request, { release, timer, isReleased: () => released });
+    callback(null, true);
+  }
+
+  io.engine.on('connection_error', ({ req }) => transportAdmissions.get(req)?.release());
+  io.engine.on('connection', (transport) => {
+    const admission = transportAdmissions.get(transport.request);
+    if (!admission || admission.isReleased()) return transport.close(true);
+    clearTimeout(admission.timer);
+    transport.request.socket.off('close', admission.release);
+    pendingAdmissions.delete(admission.release);
+    transport.once('close', admission.release);
+  });
+
+  function mutateAndSave(mutate, { rollback = true, afterSave, onFailure, system = false } = {}) {
     if (stopping) return Promise.reject(new RoomError('SERVER_RESTARTING', 'The server is restarting. Reconnect in a moment.'));
+    if (!system && pendingMutations >= settings.maxPending) return Promise.reject(new RoomError('SERVER_BUSY', 'The server is catching up. Try again in a moment.'));
+    pendingMutations += 1;
     const operation = mutationQueue.then(async () => {
       if (storageFailure) throw storageFailure;
       const before = roomStore ? rooms.exportSnapshot() : null;
@@ -44,11 +97,35 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console, 
       if (afterSave) await afterSave(result);
       return result;
     });
-    mutationQueue = operation.catch(() => {});
-    return operation;
+    const settled = operation.finally(() => { pendingMutations -= 1; });
+    mutationQueue = settled.catch(() => {});
+    return settled;
   }
 
   app.disable('x-powered-by');
+  app.use((_request, response, next) => {
+    response.set('Referrer-Policy', 'no-referrer');
+    next();
+  });
+  app.post('/api/results', (request, response, next) => {
+    response.set('Cache-Control', 'no-store');
+    if (!resultReads.take(clientAddress(request, trustProxy))) {
+      response.set('Retry-After', '5');
+      return response.status(429).json({ error: 'Too many requests. Try again in a moment.' });
+    }
+    next();
+  }, express.json({ limit: '1kb' }), async (request, response) => {
+    const token = request.body?.token;
+    if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) return response.status(400).json({ error: 'This results link is invalid.' });
+    if (!roomStore?.readResult) return response.status(503).json({ error: 'Saved results are unavailable. Try again later.' });
+    try {
+      const result = await roomStore.readResult(token);
+      if (!result) return response.status(404).json({ error: 'This saved game could not be found.' });
+      response.json({ result });
+    } catch {
+      response.status(503).json({ error: 'Saved results are unavailable. Try again in a moment.' });
+    }
+  });
   app.get('/health', (_request, response) => {
     response.status(storageFailure ? 503 : 200).json({ ok: !storageFailure, games: games.length, rooms: rooms.rooms.size });
   });
@@ -63,6 +140,8 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console, 
   }
   app.get(['/', '/index.html'], (_request, response) => response.sendFile(path.join(ROOT, 'index.html')));
   app.get('/app.js', (_request, response) => response.sendFile(path.join(ROOT, 'app.js')));
+  app.get('/result-view.js', (_request, response) => response.sendFile(path.join(ROOT, 'result-view.js')));
+  app.get('/results.css', (_request, response) => response.sendFile(path.join(ROOT, 'results.css')));
   app.get('/room-sessions.js', (_request, response) => response.sendFile(path.join(ROOT, 'room-sessions.js')));
   app.get('/style.css', (_request, response) => response.sendFile(path.join(ROOT, 'style.css')));
   app.get('/ui.css', (_request, response) => response.sendFile(path.join(ROOT, 'ui.css')));
@@ -110,9 +189,24 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console, 
   }
 
   io.on('connection', (socket) => {
+    socket.data.address = clientAddress(socket.request, trustProxy);
+    socket.use((packet, next) => {
+      const acknowledge = typeof packet.at(-1) === 'function' ? packet.at(-1) : undefined;
+      if (pendingMutations >= settings.maxPending) return sendError(socket, new RoomError('SERVER_BUSY', 'The server is catching up. Try again in a moment.'), acknowledge);
+      if (!actionLimits.take(socket.id) || !addressActions.take(socket.data.address)) {
+        return sendError(socket, new RoomError('RATE_LIMITED', 'Too many actions. Wait a moment and try again.'), acknowledge);
+      }
+      next();
+    });
     socket.on('room:create', async (_payload = {}, acknowledge) => {
       try {
-        await mutateAndSave(() => rooms.createRoom(socket.id), { afterSave: async (session) => {
+        await mutateAndSave(() => {
+          if (!rooms.roomCodeForSocket(socket.id)) {
+            if (rooms.rooms.size >= settings.maxRooms) throw new RoomError('ROOM_LIMIT', 'All game rooms are in use. Join an existing room or try again later.');
+            if (!createLimits.take(socket.data.address)) throw new RoomError('RATE_LIMITED', 'Too many rooms created. Wait a minute before creating another.');
+          }
+          return rooms.createRoom(socket.id);
+        }, { afterSave: async (session) => {
           await socket.join(session.code);
           const state = stateForSocket(socket);
           acknowledge?.({ ok: true, session, state });
@@ -214,9 +308,9 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console, 
     registerMutation(socket, 'player:final-response', ({ response }) => rooms.submitFinalResponse(socket.id, response));
     registerMutation(socket, 'player:self-score-final', (payload) => rooms.selfScoreFinal(socket.id, payload));
 
-    socket.on('host:transfer-host', async (payload = {}, acknowledge) => {
+    async function handoffHost(payload, acknowledge, reclaim = false) {
       try {
-        await mutateAndSave(() => rooms.transferHost(socket.id, payload), { afterSave: async (result) => {
+        await mutateAndSave(() => reclaim ? rooms.claimHost(socket.id) : rooms.transferHost(socket.id, payload), { afterSave: async (result) => {
           const formerHost = io.sockets.sockets.get(result.formerHostSocketId);
           const nextHost = io.sockets.sockets.get(result.newHostSocketId);
           if (!result.formerHostSession) await formerHost?.leave(result.code);
@@ -236,7 +330,9 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console, 
       } catch (error) {
         sendError(socket, error, acknowledge);
       }
-    });
+ }
+    socket.on('host:transfer-host', (payload = {}, acknowledge) => handoffHost(payload, acknowledge));
+    socket.on('player:claim-host', (_payload = {}, acknowledge) => handoffHost({}, acknowledge, true));
 
     socket.on('host:remove-player', async (payload = {}, acknowledge) => {
       try {
@@ -255,6 +351,7 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console, 
     });
 
     socket.on('disconnect', () => {
+      actionLimits.forget(socket.id);
       if (stopping) return;
       let disconnectedCode;
       void mutateAndSave(() => {
@@ -262,6 +359,7 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console, 
         return disconnectedCode;
       }, {
         rollback: false,
+        system: true,
         afterSave: (code) => code && broadcastRoom(code),
         onFailure: () => disconnectedCode && broadcastRoom(disconnectedCode),
       }).catch((error) => logger.error(error));
@@ -269,7 +367,7 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console, 
   });
 
   const cleanupTimer = setInterval(() => {
-    void mutateAndSave(() => rooms.cleanup(), { afterSave: async (removedCodes) => {
+    void mutateAndSave(() => rooms.cleanup(), { system: true, afterSave: async (removedCodes) => {
       for (const code of removedCodes) {
         io.to(code).emit('room:closed', { message: 'This room expired after a long period of inactivity.' });
         io.in(code).socketsLeave(code);
@@ -310,6 +408,7 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console, 
     async stop() {
       stopping = true;
       clearInterval(cleanupTimer);
+      for (const release of pendingAdmissions) release();
       await mutationQueue;
       await new Promise((resolve) => io.close(resolve));
       if (httpServer.listening) await new Promise((resolve) => httpServer.close(resolve));
