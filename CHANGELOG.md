@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.0.2.0] - 2026-11-08
+
+- Retry interrupted room restores and keep a manual Retry button available without enabling stale game controls.
+- Let an existing contestant take over after the host has been disconnected for 60 seconds, preserving the current game and scores.
+- Save completed results independently of rooms, with private links for opening results on another device.
+- Limit room creation, action bursts, queued writes, and transport connections while allowing valid custom boards.
+- Cover recovery races, database transactions, result privacy, and connection limits with 80 additional tests.
+
 ## [2.0.1.0] - 2026-09-02
 
 ### Added
