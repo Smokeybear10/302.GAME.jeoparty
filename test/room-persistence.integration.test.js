@@ -94,6 +94,88 @@ test(`a new server resumes private Final responses, scores, and the original gam
 });
 }
 
+for (const removal of ['leave', 'remove', 'legacy save']) {
+  test(`Final survives a controller ${removal} and restarts alongside another room`, async (context) => {
+    const filename = await temporarySave(context);
+    const games = loadGames();
+    const servers = new Set();
+    const sockets = [];
+    context.after(async () => {
+      sockets.forEach((socket) => socket.disconnect());
+      for (const server of servers) await server.stop();
+    });
+    async function start() {
+      const server = createJeopardyServer({ games, roomStore: fileRoomStore(filename) });
+      servers.add(server);
+      const address = await server.start(0, '127.0.0.1');
+      const client = () => {
+        const socket = createClient(`http://127.0.0.1:${address.port}`, { transports: ['websocket'], reconnection: false });
+        sockets.push(socket);
+        return socket;
+      };
+      return { server, host: client(), departing: client(), staying: client(), otherHost: client() };
+    }
+
+    const first = await start();
+    const hostSession = (await action(first.host, 'room:create')).session;
+    const otherSession = (await action(first.otherHost, 'room:create')).session;
+    await action(first.host, 'host:join-contestants', { name: 'Host' });
+    const departing = (await action(first.departing, 'room:join', { code: hostSession.code, name: 'Departing' })).session;
+    const staying = (await action(first.staying, 'room:join', { code: hostSession.code, name: 'Staying' })).session;
+    await action(first.host, 'host:start-game', { gameId: games[0].id });
+    const clue = games[0].categories.flatMap((category, categoryIndex) => category.clues
+      .map((clue, clueIndex) => ({ clue, categoryIndex, clueIndex }))).find(({ clue }) => !clue.dailyDouble);
+    await action(first.host, 'host:open-clue', { categoryIndex: clue.categoryIndex, clueIndex: clue.clueIndex });
+    await action(first.departing, 'player:buzz');
+    const clueKey = first.server.rooms.stateFor(first.departing.id, []).currentClue.clueKey;
+    await action(first.departing, 'player:open-answer', { clueKey });
+    await action(first.departing, 'player:self-score-clue', { clueKey, correct: true });
+    assert.equal(first.server.rooms.stateFor(first.host.id, []).controlPlayerId, departing.playerId);
+    await action(first.host, 'host:adjust-score', { playerId: staying.playerId, delta: 600 });
+    await action(first.host, 'host:start-final');
+    await action(first.departing, 'player:final-wager', { wager: 100 });
+    await action(first.staying, 'player:final-wager', { wager: 200 });
+    await action(first.host, 'host:advance-final', { phase: 'wager' });
+    await action(first.departing, 'player:final-response', { response: 'Departing response' });
+    await action(first.staying, 'player:final-response', { response: 'Private surviving response' });
+    await action(first.host, 'host:advance-final', { phase: 'clue' });
+    if (removal === 'remove') await action(first.host, 'host:remove-player', { playerId: departing.playerId });
+    else await action(first.departing, 'room:leave');
+    await first.server.stop();
+    servers.delete(first.server);
+
+    if (removal === 'legacy save') {
+      const snapshot = JSON.parse(await fs.readFile(filename, 'utf8'));
+      snapshot.rooms.find((room) => room.code === hostSession.code).controlPlayerId = departing.playerId;
+      await fs.writeFile(filename, JSON.stringify(snapshot));
+    } else {
+      const snapshot = JSON.parse(await fs.readFile(filename, 'utf8'));
+      assert.equal(snapshot.rooms.find((room) => room.code === hostSession.code).controlPlayerId, null);
+    }
+
+    const second = await start();
+    const hostState = (await action(second.host, 'room:resume', hostSession)).state;
+    const playerState = (await action(second.staying, 'room:resume', staying)).state;
+    const otherState = (await action(second.otherHost, 'room:resume', otherSession)).state;
+    assert.equal(second.server.rooms.rooms.size, 2);
+    assert.equal(hostState.controlPlayerId, null);
+    assert.equal(hostState.final.phase, 'answer');
+    assert.equal(hostState.players.some((player) => player.id === departing.playerId), false);
+    assert.equal(JSON.stringify(hostState).includes('Private surviving response'), false);
+    assert.equal(playerState.final.yourResponse, 'Private surviving response');
+    assert.equal(playerState.final.yourWager, 200);
+    assert.equal(playerState.you.score, 600);
+    assert.equal(otherState.code, otherSession.code);
+    assert.equal(otherState.phase, 'lobby');
+    await assert.rejects(action(second.departing, 'room:resume', departing), { code: 'SESSION_EXPIRED' });
+    await action(second.staying, 'player:self-score-final', { correct: true });
+    await action(second.host, 'host:finish-final');
+    assert.equal(second.server.rooms.stateFor(second.staying.id, []).you.score, 800);
+    const saved = JSON.parse(await fs.readFile(filename, 'utf8'));
+    assert.equal(saved.rooms.find((room) => room.code === hostSession.code).controlPlayerId, null);
+  });
+}
+
 test('failed saves roll back score changes and queued actions cannot overwrite each other', async (context) => {
   let snapshot = null;
   let fail = false;

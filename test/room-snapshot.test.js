@@ -207,6 +207,7 @@ test('invalid snapshots fail atomically instead of silently discarding saved roo
     (snapshot) => { snapshot.rooms[0].players[0].score = '100'; },
     (snapshot) => { snapshot.rooms[0].answered = ['double:0:0']; },
     (snapshot) => { snapshot.rooms[0].controlPlayerId = 'missing'; },
+    (snapshot) => { snapshot.rooms[0].controlPlayerId = 'p_deadbeef1234'; },
     (snapshot) => { snapshot.rooms.push(structuredClone(snapshot.rooms[0])); },
   ];
   for (const corrupt of corruptions) {
@@ -243,3 +244,49 @@ test('uncommitted wagers, revealed clues, and forced Final submissions remain va
   restored.finishFinal('new-host');
   assert.equal(reload(restored, games).rooms.get(host.code).final.phase, 'complete');
 });
+
+for (const phase of ['wager', 'clue', 'answer', 'complete']) {
+  test(`restoring an older Final ${phase} save clears only its departed controller`, () => {
+    const games = loadGames();
+    const manager = new RoomManager({ games, now: () => 1000 });
+    const host = manager.createRoom('host');
+    manager.joinHostAsPlayer('host', { name: 'Host' });
+    const player = manager.joinRoom('player', { code: host.code, name: 'Player' });
+    manager.startGame('host', games[0].id);
+    manager.adjustScore('host', { playerId: player.playerId, delta: 600 });
+    manager.startFinal('host');
+    if (phase !== 'wager') {
+      manager.submitFinalWager('player', 200);
+      manager.advanceFinal('host');
+    }
+    if (['answer', 'complete'].includes(phase)) {
+      manager.submitFinalResponse('player', 'Private response');
+      manager.advanceFinal('host');
+    }
+    if (phase === 'complete') {
+      manager.selfScoreFinal('player', { correct: true });
+      manager.finishFinal('host');
+    }
+    const snapshot = manager.exportSnapshot();
+    snapshot.rooms[0].controlPlayerId = 'p_deadbeef1234';
+    const original = structuredClone(snapshot);
+    const expected = structuredClone(snapshot);
+    expected.rooms[0].controlPlayerId = null;
+    const restored = new RoomManager({ games, now: () => 1000 });
+    restored.restoreSnapshot(snapshot, { restoreConnections: true, expire: false });
+    assert.deepEqual(restored.exportSnapshot(), expected);
+    assert.deepEqual(snapshot, original);
+
+    for (const corrupt of [
+      (room) => { room.controlPlayerId = 'missing'; },
+      (room) => { room.disconnectedControlPlayerId = 'p_deadbeef1234'; },
+      (room) => { room.players[0].score = '600'; },
+      (room) => { room.final = null; },
+    ]) {
+      const damaged = structuredClone(snapshot);
+      corrupt(damaged.rooms[0]);
+      assert.throws(() => restored.restoreSnapshot(damaged), /Invalid room snapshot/);
+      assert.deepEqual(restored.exportSnapshot(), expected);
+    }
+  });
+}
