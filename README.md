@@ -1,6 +1,10 @@
-# Jeopardy! Local Multiplayer
+# Jeopardy! | Multiplayer Trivia
 
-A browser-based Jeopardy-style game for up to eight players on the same local network. The room creator can play alongside friends or run a dedicated host screen.
+**Live demo: [jeopardy-game-43jc.onrender.com](https://jeopardy-game-43jc.onrender.com)**
+
+A browser-based Jeopardy-style game for up to eight players. Share a room link and join from a phone or computer. The room creator can play alongside friends or run a dedicated host screen.
+
+The public site runs on Render's free plan, so the first visit after inactivity can take about a minute. Trivia practice is available at [`/practice`](https://jeopardy-game-43jc.onrender.com/practice), with progress saved in each browser.
 
 The game can load real historical boards from the compressed archive maintained
 by [howardchung/jeopardy](https://github.com/howardchung/jeopardy). By default it
@@ -25,7 +29,7 @@ Jeopardy clues. The original 20 boards remain as an offline fallback.
 ## Requirements
 
 - [Node.js](https://nodejs.org/) 20 or newer
-- All participating devices connected to the same local network or Wi-Fi
+- For local hosting, all participating devices connected to the same local network or Wi-Fi
 
 ## Start the server
 
@@ -70,10 +74,10 @@ A dedicated host never receives clue or Final Jeopardy answers. A creator who jo
 
 ## Join as a player
 
-1. Open the host's local-network address on a phone or laptop.
+1. Open the shared room link on a phone or laptop. For a locally hosted game, use the host's local-network address on the same Wi-Fi.
 2. Enter the room code and a display name.
 3. Keep the page open while the host chooses a game.
-4. When a clue appears, tap the red buzzer or press **Space**. The host sees everyone in server-received order.
+4. When a clue appears, tap **Buzz in** or press **Space**. The host sees everyone in server-received order.
 5. If you are first, say your response aloud, check the official response on your device, and mark yourself correct or incorrect.
 6. Players with a positive score can submit a private Final Jeopardy wager and response, then self-score it from their device.
 
@@ -92,10 +96,14 @@ Rooms live in memory. A fully disconnected room expires after 12 hours of inacti
 
 ## Question bank
 
-Run `npm run fetch:archive` to download Howard's roughly 30 MB compressed archive
-to `data/archive/howard-jeopardy.json.gz`. The file is gitignored. At startup the
-server converts complete episodes into the game's format and serves the newest
-full playable archive by default.
+Run `npm run build` to download Howard's roughly 30 MB compressed archive and
+prepare all complete playable episodes in `data/archive/howard-playable.json`.
+Both generated files are gitignored. The server loads the prepared bank at
+startup; an older local installation with only the compressed archive still works.
+
+Render runs the syntax checks and test suite before each build, then starts one
+Node.js instance with `npm start` and checks `/health`. Deploys and server restarts
+end current multiplayer rooms.
 
 ```bash
 JEOPARDY_ARCHIVE_LIMIT=1000 npm start  # newest 1,000 playable episodes
