@@ -118,6 +118,85 @@ test('selection falls back after disconnect or removal and creator reconnect ret
   assert.equal(state('first-resumed').controlPlayerId, first.playerId);
 });
 
+test('reloading restores an earned selection turn and score before another clue is picked', () => {
+  const { manager, state, creatorId, host, first, clues } = setup();
+  const location = clues.find(({ clue }) => !clue.dailyDouble);
+  manager.openClue('host', location);
+  const { clueKey } = state().currentClue;
+  manager.buzz('first');
+  manager.openPlayerAnswer('first', { clueKey });
+  manager.selfScoreClue('first', { clueKey, correct: true });
+  manager.disconnect('first');
+  assert.equal(state().controlPlayerId, creatorId);
+  assert.equal(state().canChooseClue, true);
+  assert.throws(() => manager.openClue('host', location), { code: 'CLUE_ALREADY_USED' });
+
+  manager.resumeRoom('first-resumed', { code: host.code, token: first.token });
+  const resumed = state('first-resumed');
+  assert.equal(resumed.you.id, first.playerId);
+  assert.equal(resumed.you.score, location.clue.value);
+  assert.equal(resumed.players.length, 3);
+  assert.equal(resumed.controlPlayerId, first.playerId);
+  assert.equal(resumed.canChooseClue, true);
+  assert.equal(state().canChooseClue, false);
+});
+
+test('a fallback selection consumes the disconnected contestant’s claim to the turn', () => {
+  const { manager, state, host, first, clues } = setup();
+  const location = clues.find(({ clue }) => !clue.dailyDouble);
+  manager.disconnect('host');
+  assert.equal(state('first').canChooseClue, true);
+  manager.openClue('first', location);
+  manager.resumeRoom('host-resumed', { code: host.code, token: host.token });
+  manager.skipClue('host-resumed');
+  assert.equal(state('first').controlPlayerId, first.playerId);
+  assert.equal(state('first').canChooseClue, true);
+  assert.equal(state('host-resumed').canChooseClue, false);
+});
+
+test('chained disconnects preserve the first rightful picker until they return', () => {
+  const { manager, state, creatorId, host, first, second } = setup();
+  manager.disconnect('host');
+  manager.disconnect('first');
+  assert.equal(state('second').controlPlayerId, second.playerId);
+  manager.resumeRoom('first-resumed', { code: host.code, token: first.token });
+  assert.equal(state('second').controlPlayerId, second.playerId);
+  manager.resumeRoom('host-resumed', { code: host.code, token: host.token });
+  assert.equal(state('host-resumed').controlPlayerId, creatorId);
+  assert.equal(state('host-resumed').canChooseClue, true);
+});
+
+test('a correct response takes priority over a disconnected picker’s previous turn', () => {
+  const { manager, state, host, first, clues } = setup();
+  const location = clues.find(({ clue }) => !clue.dailyDouble);
+  manager.openClue('host', location);
+  const { clueKey } = state().currentClue;
+  manager.buzz('first');
+  manager.openPlayerAnswer('first', { clueKey });
+  manager.disconnect('host');
+  manager.selfScoreClue('first', { clueKey, correct: true });
+  manager.resumeRoom('host-returned', { code: host.code, token: host.token });
+  assert.equal(state('first').controlPlayerId, first.playerId);
+  assert.equal(state('first').canChooseClue, true);
+  assert.equal(state('host-returned').canChooseClue, false);
+});
+
+test('resetting a game clears an offline contestant’s claim to the next selection', () => {
+  const { manager, state, creatorId, host, first, clues } = setup();
+  const location = clues.find(({ clue }) => !clue.dailyDouble);
+  manager.openClue('host', location);
+  const { clueKey } = state().currentClue;
+  manager.buzz('first');
+  manager.openPlayerAnswer('first', { clueKey });
+  manager.selfScoreClue('first', { clueKey, correct: true });
+  manager.disconnect('first');
+  manager.resetGame('host');
+  manager.resumeRoom('first-resumed', { code: host.code, token: first.token });
+  assert.equal(state().controlPlayerId, creatorId);
+  assert.equal(state().canChooseClue, true);
+  assert.equal(state('first-resumed').canChooseClue, false);
+});
+
 test('creator Daily Double hides the question before the wager and cannot be reassigned to another contestant', () => {
   const { manager, state, creatorId, first, clues } = setup();
   const location = clues.find(({ clue }) => clue.dailyDouble);

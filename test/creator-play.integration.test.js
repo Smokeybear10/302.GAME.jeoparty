@@ -52,7 +52,7 @@ async function setup(context) {
 test('socket creator can opt into the roster, play, transfer selection, and resume a private answer', async (context) => {
   const { games, client } = await setup(context);
   const host = client();
-  const player = client();
+  let player = client();
   const created = await action(host, 'room:create');
   assert.equal(created.state.you, null);
   assert.equal(created.state.controlPlayerId, null);
@@ -101,6 +101,17 @@ test('socket creator can opt into the roster, play, transfer selection, and resu
   const remoteTurn = nextState(player, (state) => state.canChooseClue);
   await action(player, 'player:self-score-clue', { clueKey, correct: true });
   assert.equal((await remoteTurn).controlPlayerId, remote.session.playerId);
+  const remoteDisconnected = nextState(resumedHost, (state) => state.players.some((contestant) => contestant.id === remote.session.playerId && !contestant.connected));
+  player.disconnect();
+  assert.equal((await remoteDisconnected).controlPlayerId, creator.id);
+  const restoredTurn = nextState(resumedHost, (state) => state.controlPlayerId === remote.session.playerId && state.players.every((contestant) => contestant.connected));
+  player = client();
+  const restoredPlayer = await action(player, 'room:resume', remote.session);
+  assert.equal(restoredPlayer.state.you.id, remote.session.playerId);
+  assert.equal(restoredPlayer.state.you.score, first.clue.value);
+  assert.equal(restoredPlayer.state.players.length, 2);
+  assert.equal(restoredPlayer.state.canChooseClue, true);
+  await restoredTurn;
   await assert.rejects(action(resumedHost, 'host:open-clue', second), { code: 'NOT_YOUR_TURN' });
   await action(player, 'player:open-clue', second);
   await action(resumedHost, 'host:skip-clue');

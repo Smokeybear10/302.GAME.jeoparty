@@ -16,12 +16,13 @@ const elements = {
   landingYearFilter: document.querySelector('#landing-year-filter'),
   librarySummary: document.querySelector('#library-summary'),
   landingNetworkAddress: document.querySelector('#landing-network-address'),
+  landingNetworkHelp: document.querySelector('#landing-network-help'),
   joinName: document.querySelector('#join-name'),
   landingScreen: document.querySelector('#landing-screen'),
+  landingTitle: document.querySelector('#landing-title'),
+  inviteIntro: document.querySelector('#invite-intro'),
   leaveRoomButton: document.querySelector('#leave-room-button'),
-  roleChip: document.querySelector('#role-chip'),
   roomCodeButton: document.querySelector('#room-code-button'),
-  roomConnectionPill: document.querySelector('#room-connection-pill'),
   roomContent: document.querySelector('#room-content'),
   roomHeader: document.querySelector('.room-header'),
   roomScreen: document.querySelector('#room-screen'),
@@ -38,6 +39,7 @@ let resuming = false;
 let mutationPending = false;
 let joining = false;
 let shouldResumeOnConnect = true;
+let inviteRoomCode = '';
 let networkUrls = [window.location.origin];
 let publicGameCatalog = [];
 let catalogStatus = 'loading';
@@ -194,16 +196,14 @@ function setConnectionState(isConnected) {
   connected = isConnected;
   if (isConnected) hasConnected = true;
   elements.connectionLabel.textContent = isConnected
-    ? 'Game server connected'
-    : hasConnected ? 'Connection lost — trying to reconnect…' : 'Connecting to game server…';
+    ? ''
+    : hasConnected ? 'Connection lost. Reconnecting…' : 'Connecting…';
   elements.createRoomButton.disabled = !isConnected || resuming;
   elements.createCustomRoomButton.disabled = !isConnected || resuming;
   elements.joinRoomButton.disabled = !isConnected || resuming || joining;
   document.querySelectorAll('.public-game-row').forEach((row) => {
     row.disabled = !isConnected || resuming;
   });
-  elements.roomConnectionPill.classList.toggle('offline', !isConnected);
-  elements.roomConnectionPill.innerHTML = `<span></span> ${isConnected ? 'Live' : hasConnected ? 'Reconnecting' : 'Connecting'}`;
   document.body.classList.toggle('is-offline', !isConnected);
 }
 
@@ -283,7 +283,7 @@ async function resumeSavedSession() {
 }
 
 function preferredNetworkUrl() {
-  const currentHostIsLoopback = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+  const currentHostIsLoopback = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(window.location.hostname);
   if (!currentHostIsLoopback) return window.location.origin;
   return networkUrls.find((url) => !url.includes('localhost') && !url.includes('127.0.0.1')) || window.location.origin;
 }
@@ -295,17 +295,32 @@ function inviteUrl() {
 
 async function copyInvite() {
   const value = inviteUrl();
+  let copied = false;
   try {
     await navigator.clipboard.writeText(value);
+    copied = true;
   } catch {
+    const previousFocus = document.activeElement;
     const textarea = document.createElement('textarea');
     textarea.value = value;
+    textarea.readOnly = true;
     textarea.style.position = 'fixed';
     textarea.style.opacity = '0';
     document.body.appendChild(textarea);
-    textarea.select();
-    document.execCommand('copy');
-    textarea.remove();
+    try {
+      textarea.focus({ preventScroll: true });
+      textarea.select();
+      copied = document.execCommand('copy');
+    } catch {
+      copied = false;
+    } finally {
+      textarea.remove();
+      previousFocus?.focus?.({ preventScroll: true });
+    }
+  }
+  if (!copied) {
+    window.prompt('Copy this player link:', value);
+    return;
   }
   showToast('Player link copied.', 'success');
 }
@@ -358,6 +373,9 @@ function manageDialogFocus(previousDialogKey, focusSelector) {
 }
 
 function renderPublicLobby() {
+  elements.landingScreen.classList.toggle('is-invite', Boolean(inviteRoomCode));
+  elements.landingTitle.textContent = inviteRoomCode ? 'Join game' : 'Game lobby';
+  elements.inviteIntro.hidden = !inviteRoomCode;
   if (!elements.publicGameList) return;
   if (elements.librarySummary && publicGameCatalog.length > 0) {
     elements.librarySummary.textContent = `${publicGameCatalog.length.toLocaleString()} games`;
@@ -393,6 +411,9 @@ function renderPublicLobby() {
   if (elements.landingNetworkAddress) {
     elements.landingNetworkAddress.textContent = preferredNetworkUrl().replace(/^https?:\/\//, '');
   }
+  elements.landingNetworkHelp.textContent = window.location.protocol === 'https:'
+    ? 'Share this address with your players:'
+    : 'Connect to the same Wi-Fi and open:';
 }
 
 async function loadCatalog() {
@@ -413,13 +434,12 @@ async function loadCatalog() {
 
 function renderRoster({ hostControls = false } = {}) {
   if (!roomState.players.length) {
-    return '<div class="empty-roster"><strong>No players yet.</strong><span>Share the room link to fill the scoreboard.</span></div>';
+    return '<div class="empty-roster"><strong>No players yet.</strong></div>';
   }
   return `<ul class="roster-list">
     ${roomState.players.map((player) => `
       <li class="roster-item ${player.id === roomState.you?.id ? 'is-you' : ''} ${player.isHost ? 'is-host' : ''}">
-        <span class="presence-dot ${player.connected ? '' : 'offline'}" aria-label="${player.connected ? 'Connected' : 'Disconnected'}"></span>
-        <span class="roster-name"><span>${escapeHtml(player.name)}</span>${player.isHost ? '<em class="host-badge">Host</em>' : ''}${player.id === roomState.you?.id ? '<em>You</em>' : ''}</span>
+        <span class="roster-name"><span>${escapeHtml(player.name)}</span>${player.isHost ? '<em class="host-badge">Host</em>' : ''}${player.id === roomState.you?.id ? '<em>You</em>' : ''}${!player.connected ? '<em>Offline</em>' : ''}</span>
         ${roomState.phase !== 'lobby' ? `<strong>${formatMoney(player.score)}</strong>` : ''}
         ${hostControls && !player.isHost ? `<button class="icon-button" type="button" data-action="remove-player" data-player-id="${escapeAttr(player.id)}" aria-label="Remove ${escapeAttr(player.name)}">×</button>` : ''}
       </li>
@@ -554,7 +574,6 @@ function renderHostLobby() {
     return catalog.indexOf(firstGame) - catalog.indexOf(secondGame);
   });
   const visibleGames = filteredGames.slice(0, CATALOG_RENDER_LIMIT);
-  const urls = [preferredNetworkUrl()];
 
   return `
     <div class="lobby-layout">
@@ -571,7 +590,7 @@ function renderHostLobby() {
         </div>
         <div class="lobby-preview-status">
           <span>${preferredGame ? '30 clues · 6 categories · Final Jeopardy' : 'Select a row in the archive to use that episode.'}</span>
-          <span>${!connectedPlayers ? 'At least one player needed to start' : `${connectedPlayers} player${connectedPlayers === 1 ? '' : 's'} ready`}</span>
+          ${!connectedPlayers ? '<span>Add a player to start.</span>' : ''}
         </div>
       </section>
 
@@ -579,12 +598,11 @@ function renderHostLobby() {
         <section class="broadcast-card">
           <div class="broadcast-heading">
             <p class="panel-label">Room code</p>
-            <span class="live-note"><i></i> Open</span>
           </div>
           <button class="giant-code" type="button" data-action="copy-invite" aria-label="Copy player link for room ${escapeAttr(roomState.code)}">${escapeHtml(roomState.code)}<small>Copy player link</small></button>
           <div class="network-addresses">
-            <span>Join on the same Wi-Fi</span>
-            ${urls.map((url) => `<code>${escapeHtml(url.replace(/^https?:\/\//, ''))}</code>`).join('')}
+            <span>${window.location.protocol === 'https:' ? 'Player link' : 'Join on the same Wi-Fi'}</span>
+            <code>${escapeHtml(inviteUrl().replace(/^https?:\/\//, ''))}</code>
           </div>
         </section>
         <section class="roster-card">
@@ -646,10 +664,7 @@ function renderHostLobby() {
 function renderPlayerLobby() {
   return `
     <div class="waiting-stage">
-      <div class="waiting-pulse" aria-hidden="true"><span></span><span></span><span></span></div>
-      <p class="panel-label">You're in room ${escapeHtml(roomState.code)}</p>
-      <h2>Waiting for the host</h2>
-      <p>Keep this screen open. The board will appear as soon as the host chooses a game.</p>
+      <h2>Waiting for the game to start</h2>
       <div class="player-ticket">
         <span>Playing as</span>
         <strong>${escapeHtml(roomState.you?.name || 'Player')}</strong>
@@ -675,7 +690,7 @@ function renderScoreboard() {
           <article class="score-card ${player.id === roomState.you?.id ? 'is-you' : ''} ${player.id === roomState.controlPlayerId ? 'has-control' : ''}">
             <div class="place-number">${String(ranked.findIndex((candidate) => candidate.score === player.score) + 1).padStart(2, '0')}</div>
             <div class="score-copy">
-              <span class="score-name"><i class="presence-dot ${player.connected ? '' : 'offline'}"></i><b>${escapeHtml(player.name)}</b>${player.isHost ? '<em>Host</em>' : ''}</span>
+              <span class="score-name"><b>${escapeHtml(player.name)}</b>${player.isHost ? '<em>Host</em>' : ''}${!player.connected ? '<em>Offline</em>' : ''}</span>
               <strong class="${player.score < 0 ? 'negative' : ''}">${formatMoney(player.score)}</strong>
             </div>
             ${showScoreControls
@@ -743,9 +758,7 @@ function renderBuzzQueue(clue) {
     const player = playerById(clue.dailyPlayerId);
     return player ? `<div class="daily-player-callout"><span>Daily Double belongs to</span><strong>${escapeHtml(player.name)}</strong></div>` : '';
   }
-  if (clue.buzzes.length === 0) {
-    return `<div class="buzz-queue empty"><span class="queue-light"></span>${clue.buzzOpen ? 'Buzzers are open' : 'Buzzers are locked'}</div>`;
-  }
+  if (clue.buzzes.length < 2) return '';
   return `<ol class="buzz-queue" aria-label="Buzz order">
     ${clue.buzzes.map((buzz) => `<li class="${buzz.position === 1 ? 'first-buzz' : ''}"><span>${buzz.position}</span>${escapeHtml(buzz.name)}</li>`).join('')}
   </ol>`;
@@ -797,29 +810,22 @@ function renderDailyWager(clue) {
 
 function renderHostTurnStatus(clue) {
   const responder = playerById(clue.responderPlayerId);
-  const connectedPlayers = roomState.players.filter((player) => player.connected).length;
   if (clue.revealed) {
     return `
       <section class="host-turn-status is-revealed" role="status">
-        <span>Answer sent</span>
-        <strong>Shown on contestant screens</strong>
-        <p>The host display stays answer-free. Close the clue when the room is ready.</p>
+        <strong>Players can see the answer</strong>
       </section>`;
   }
   if (responder) {
     const checking = clue.selfJudgePlayerId === responder.id;
     return `
       <section class="host-turn-status ${checking ? 'is-checking' : 'is-answering'}" role="status">
-        <span>${checking ? 'Self-check in progress' : clue.dailyDouble ? 'Daily Double' : 'First buzz'}</span>
-        <strong>${escapeHtml(responder.name)} ${checking ? 'is checking' : 'is answering'}</strong>
-        <p>${checking ? 'The official response is visible only on their screen.' : 'They answer aloud, then check and score themselves on their device.'}</p>
+        <strong>${escapeHtml(responder.name)} ${checking ? 'is checking their answer' : 'is answering'}</strong>
       </section>`;
   }
   return `
     <section class="host-turn-status is-open" role="status">
-      <span>${clue.buzzOpen ? 'Buzzers open' : 'Buzzers closed'}</span>
-      <strong>${clue.buzzOpen ? 'Waiting for a contestant' : 'Waiting on the room'}</strong>
-      <p>${connectedPlayers} connected contestant${connectedPlayers === 1 ? '' : 's'} · the answer never appears on this host display.</p>
+      <strong>${clue.buzzOpen ? 'Waiting for a buzz' : 'Buzzers paused'}</strong>
     </section>`;
 }
 
@@ -837,7 +843,7 @@ function renderHostClue(clue) {
           <span>${clue.dailyDouble ? 'Daily Double · ' : ''}${escapeHtml(clue.category)}</span>
           <strong>${formatMoney(clue.value)}</strong>
         </div>
-        <h2 class="clue-question" id="clue-question">${escapeHtml(clue.question)}</h2>
+        <h2 class="clue-question" id="clue-question">${escapeHtml(clue.question.replace(/--/g, '—'))}</h2>
         <div class="host-clue-workspace">
           ${renderHostTurnStatus(clue)}
           ${renderBuzzQueue(clue)}
@@ -858,26 +864,25 @@ function renderPlayerTurnState(clue, you, yourBuzz, ineligible) {
   if (clue.revealed) {
     return `
       <section class="self-judge-panel is-public" role="status">
-        <span>Official response</span>
+        <span>Answer</span>
         <strong class="private-answer">${escapeHtml(clue.answer)}</strong>
-        <p>No contestant claimed it. The host will close the clue.</p>
       </section>`;
   }
   if (isActive && clue.privateAnswer) {
     return `
       <section class="self-judge-panel is-open" aria-labelledby="private-answer-label">
-        <span id="private-answer-label">Official response · only on your screen</span>
+        <span id="private-answer-label">Answer</span>
         <strong class="private-answer">${escapeHtml(clue.privateAnswer)}</strong>
         <div class="self-judge-actions">
-          <button class="judge-correct" type="button" data-action="self-score-clue" data-correct="true">I was correct</button>
-          <button class="judge-wrong" type="button" data-action="self-score-clue" data-correct="false">I was incorrect</button>
+          <button class="judge-correct" type="button" data-action="self-score-clue" data-correct="true">Correct</button>
+          <button class="judge-wrong" type="button" data-action="self-score-clue" data-correct="false">Incorrect</button>
         </div>
       </section>`;
   }
   if (isActive) {
     return `
       <section class="self-judge-panel is-ready">
-        <span>${clue.dailyDouble ? 'This one is yours' : 'Your turn'}</span>
+        <span>${clue.dailyDouble ? 'Daily Double' : 'Your turn'}</span>
         <strong>Say your response out loud</strong>
         <button class="button button-gold button-large" type="button" data-action="open-player-answer" ${clue.canOpenAnswer ? '' : 'disabled'}>Check my response</button>
       </section>`;
@@ -901,7 +906,7 @@ function renderPlayerTurnState(clue, you, yourBuzz, ineligible) {
   if (!clue.buzzOpen) {
     return '<div class="player-turn-state is-paused" role="status"><strong>Buzzers paused</strong><span>Wait for the room creator to reopen them.</span></div>';
   }
-  return '<div class="player-turn-state is-open" role="status"><strong>Buzzers open</strong><span>First buzz answers.</span></div>';
+  return '<span class="sr-only" role="status">Buzzers open</span>';
 }
 
 function renderPlayerClue(clue) {
@@ -929,16 +934,16 @@ function renderPlayerClue(clue) {
           <span>${clue.dailyDouble ? 'Daily Double · ' : ''}${escapeHtml(clue.category)}</span>
           <strong>${formatMoney(clue.value)}</strong>
         </div>
-        <h2 class="clue-question" id="player-clue-question">${escapeHtml(clue.question)}</h2>
+        <h2 class="clue-question" id="player-clue-question">${escapeHtml(clue.question.replace(/--/g, '—'))}</h2>
         <div class="player-clue-controls">
           <div class="player-clue-action ${canBuzz ? 'has-buzzer' : ''}">
             ${canBuzz ? `<button class="buzzer" type="button" data-action="buzz" aria-label="Buzz in" aria-keyshortcuts="Space">
-              <span class="buzzer-face">BUZZ</span>
-              <small><kbd>SPACE</kbd> / tap</small>
+              <span class="buzzer-face">Buzz in</span>
+              <kbd aria-hidden="true">Space</kbd>
             </button>` : ''}
             ${renderPlayerTurnState(clue, you, yourBuzz, ineligible)}
           </div>
-          ${clue.dailyDouble || !clue.buzzes.length ? '' : renderBuzzQueue(clue)}
+          ${clue.dailyDouble ? '' : renderBuzzQueue(clue)}
           <div class="player-clue-footer">
             ${roomState.role === 'host' ? renderCreatorClueControls(clue) : ''}
             ${clue.canSkipClue ? `
@@ -988,7 +993,6 @@ function renderBoard() {
         ${finished ? `<section class="board-finished"><h3>That's the board.</h3><p>${roomState.role === 'host' ? 'Head to Final Jeopardy, or choose another game.' : 'The room creator can start Final Jeopardy or choose another game.'}</p></section>` : `
           <div class="board-turn-strip ${roomState.canChooseClue ? 'is-your-turn' : ''}">
             <strong>${roomState.canChooseClue ? 'Your pick' : choosingPlayer ? `${escapeHtml(choosingPlayer.name)} picks next` : everyonePlays ? 'Waiting for a player' : 'Host picks the next clue'}</strong>
-            <span>${everyonePlays ? 'Answer correctly to choose the next clue.' : 'Pick a category and value. Everyone gets a buzzer.'}</span>
           </div>`}
         ${renderBoardGrid()}
       </div>
@@ -1000,7 +1004,7 @@ function renderBoard() {
 function submissionStatus(submission, type) {
   const complete = type === 'wager' ? submission.wagerSubmitted : submission.responseSubmitted;
   const isYou = submission.playerId === roomState.you?.id;
-  return `<li class="${isYou ? 'is-you' : ''}"><span class="presence-dot ${complete ? '' : 'waiting'}"></span><strong>${escapeHtml(submission.name)}${isYou ? ' <i>You</i>' : ''}</strong><em>${complete ? 'Ready' : 'Waiting'}</em></li>`;
+  return `<li class="${isYou ? 'is-you' : ''}"><strong>${escapeHtml(submission.name)}${isYou ? ' <i>You</i>' : ''}</strong><em>${complete ? 'Submitted' : 'Waiting'}</em></li>`;
 }
 
 function renderFinalHost(final) {
@@ -1034,15 +1038,13 @@ function renderFinalHost(final) {
         <span class="final-category">${escapeHtml(final.category)}</span>
         <h2>${escapeHtml(final.clue)}</h2>
         <div class="host-turn-status ${pending ? 'is-checking' : 'is-revealed'}" role="status">
-          <span>Private self-check</span>
           <strong>${pending ? `${pending} contestant${pending === 1 ? '' : 's'} still checking` : 'Every response is scored'}</strong>
-          <p>The official response and submitted answers stay on contestant screens. The host sees status only.</p>
         </div>
         <div class="final-response-grid">
           ${final.submissions.map((submission) => `
             <article class="final-response-card ${submission.scored ? 'scored' : ''}">
               <div><span>${escapeHtml(submission.name)}</span><strong>${submission.scored ? 'Scored' : 'Checking'}</strong></div>
-              <p class="result-stamp ${submission.scored ? (submission.correct ? 'correct' : 'incorrect') : ''}">${submission.scored ? (submission.correct ? 'Self-marked correct' : 'Self-marked incorrect') : 'Waiting on contestant'}</p>
+              <p class="result-stamp ${submission.scored ? (submission.correct ? 'correct' : 'incorrect') : ''}">${submission.scored ? (submission.correct ? 'Correct' : 'Incorrect') : 'Waiting for an answer'}</p>
             </article>
           `).join('')}
         </div>
@@ -1124,10 +1126,9 @@ function renderFinalPlayer(final) {
           <span>Your locked response · ${formatMoney(final.yourWager)}</span>
           <blockquote>${escapeHtml(final.yourResponse || '(No response submitted)')}</blockquote>
           ${final.canSelfScore
-            ? `<p>Compare the two, then score your own response.</p>
-              <div class="self-judge-actions">
-                <button class="judge-correct" type="button" data-action="self-score-final" data-correct="true">I was correct</button>
-                <button class="judge-wrong" type="button" data-action="self-score-final" data-correct="false">I was incorrect</button>
+            ? `<div class="self-judge-actions">
+                <button class="judge-correct" type="button" data-action="self-score-final" data-correct="true">Correct</button>
+                <button class="judge-wrong" type="button" data-action="self-score-final" data-correct="false">Incorrect</button>
               </div>`
             : `<div class="submission-confirmed"><span>Result locked</span><strong>${final.yourResult ? 'Correct' : 'Incorrect'}</strong></div>`}
         </section>
@@ -1144,7 +1145,7 @@ function renderFinal() {
         ${roomState.you ? renderFinalPlayer(final) : renderFinalHost(final)}
         ${roomState.role === 'host' && roomState.you && final.phase !== 'complete' ? renderCreatorFinalControls(final) : ''}
       </div>
-      <aside class="final-score-strip">${renderScoreboard()}</aside>
+      ${final.phase === 'complete' ? '' : `<aside class="final-score-strip">${renderScoreboard()}</aside>`}
     </div>`;
 }
 
@@ -1160,9 +1161,9 @@ function renderCreatorFinalControls(final) {
   const actionLabel = final.phase === 'wager' ? 'Reveal Final clue' : final.phase === 'clue' ? 'Reveal answer' : 'Show final standings';
   return `
     <section class="final-room-controls">
-      <p class="panel-label">Room progress · ${pending ? `${pending} waiting` : 'Everyone is ready'}</p>
+      <p class="panel-label">${pending ? `Waiting for ${pending} player${pending === 1 ? '' : 's'}` : 'All players finished'}</p>
       ${final.phase === 'answer'
-        ? `<ul class="submission-list">${final.submissions.map((submission) => `<li><span class="presence-dot ${submission.scored ? '' : 'waiting'}"></span><strong>${escapeHtml(submission.name)}</strong><em>${submission.scored ? 'Scored' : 'Checking'}</em></li>`).join('')}</ul>`
+        ? `<ul class="submission-list">${final.submissions.map((submission) => `<li><strong>${escapeHtml(submission.name)}</strong><em>${submission.scored ? 'Scored' : 'Checking'}</em></li>`).join('')}</ul>`
         : `<ul class="submission-list">${final.submissions.map((submission) => submissionStatus(submission, statusType)).join('')}</ul>`}
       <button class="button button-secondary" type="button" data-action="${action}" ${yourEntryPending ? 'disabled' : ''}>${actionLabel}</button>
       ${yourEntryPending ? '<p class="waiting-copy">Complete your own turn first.</p>' : ''}
@@ -1187,11 +1188,6 @@ function renderRoom() {
       }
     : null;
   elements.roomCodeButton.textContent = roomState.code;
-  const creatorPlaying = roomState.role === 'host' && Boolean(roomState.you);
-  elements.roleChip.textContent = creatorPlaying ? 'Playing · Room creator' : roomState.role === 'host' ? 'Room creator' : 'Player';
-  elements.roleChip.classList.toggle('player-role', roomState.role === 'player');
-  elements.roleChip.classList.toggle('dual-role', creatorPlaying);
-  elements.roomHeader.classList.toggle('dual-role-header', creatorPlaying);
   elements.leaveRoomButton.textContent = roomState.role === 'host' ? 'End room' : 'Leave';
 
   const hostOfflineNotice = roomState.role === 'player' && !roomState.hostConnected
@@ -1255,9 +1251,6 @@ async function createRoom(gameId = null, { buildCustom = false } = {}) {
     hostGameListScroll = 0;
   }
   render();
-  if (!gameId) {
-    showToast('Room created. Share the code when you are ready.', 'success');
-  }
 }
 
 async function joinRoom(form) {
@@ -1294,7 +1287,6 @@ async function joinRoom(form) {
   localStorage.setItem(NAME_KEY, name);
   resetDrafts();
   render();
-  showToast(`Joined room ${response.session.code}.`, 'success');
 }
 
 function clearJoinError() {
@@ -1454,7 +1446,6 @@ elements.roomContent.addEventListener('submit', (event) => {
       await request('host:join-contestants', { name });
       localStorage.setItem(NAME_KEY, name);
       drafts.hostName = name;
-      showToast('You joined the players. Your answers stay private.', 'success');
     });
   } else if (event.target.id === 'custom-game-form') {
     void runAction(async () => {
@@ -1678,6 +1669,7 @@ socket.on('room:replaced', ({ message }) => {
 async function boot() {
   const roomCode = new URLSearchParams(window.location.search).get('room');
   const inviteCode = roomCode?.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5) || '';
+  inviteRoomCode = inviteCode;
   if (inviteCode) elements.joinCode.value = inviteCode;
   elements.joinName.value = localStorage.getItem(NAME_KEY) || '';
   const session = savedSession();

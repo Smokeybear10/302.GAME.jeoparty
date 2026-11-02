@@ -8,7 +8,7 @@
       name="description"
       content="Play Jeopardy with friends. Choose an episode, share a room, and buzz in."
     />
-    <title>Jeopardy! With Friends</title>
+    <title>Jeopardy!</title>
     <link rel="stylesheet" href="/style.css" />
     <link rel="stylesheet" href="/ui.css" />
     <script src="/socket.io/socket.io.js" defer></script>
@@ -17,16 +17,17 @@
   <body>
     <div class="signal-bar" aria-live="polite">
       <span class="signal-mark" aria-hidden="true"></span>
-      <span id="connection-label">Connecting to game server…</span>
+      <span id="connection-label">Connecting…</span>
     </div>
     <main id="app">
       <section class="landing" id="landing-screen">
         <header class="hub-nav">
-          <a class="hub-brand" href="/" aria-label="Jeopardy Local home">
+          <a class="hub-brand" href="/" aria-label="Jeopardy home">
             <svg class="brand-mark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M2 3h5v7H2zm7.5 0h5v7h-5zM17 3h5v7h-5zM2 12h5v9H2zm7.5 0h5v9h-5zM17 12h5v9h-5z" /></svg>
-            Jeopardy!<small>with friends</small>
+            Jeopardy!
           </a>
           <div class="hub-actions">
+            <a class="button button-secondary" href="/practice">Practice</a>
             <button
               class="button button-secondary"
               id="create-custom-room-button"
@@ -40,8 +41,8 @@
         <div class="landing-shell">
           <div class="landing-heading">
             <div>
-              <h1>Game lobby</h1>
-              <p>Create a room or join a game with friends.</p>
+              <h1 id="landing-title">Game lobby</h1>
+              <p id="invite-intro" hidden>Enter your name to join.</p>
             </div>
             <button class="button button-primary" id="create-room-button" type="button" disabled>Create room <span aria-hidden="true">+</span></button>
           </div>
@@ -53,7 +54,6 @@
                 aria-labelledby="join-title"
               >
                 <h2 id="join-title">Join a room</h2>
-                <p class="join-description">Have an invite? Enter your room code.</p>
                 <form id="join-room-form" class="join-form">
                   <label
                     ><span>Room code</span
@@ -61,7 +61,9 @@
                       id="join-code"
                       name="code"
                       autocomplete="off"
+                      autocorrect="off"
                       autocapitalize="characters"
+                      enterkeyhint="next"
                       spellcheck="false"
                       maxlength="5"
                       minlength="5"
@@ -75,6 +77,7 @@
                       id="join-name"
                       name="name"
                       autocomplete="nickname"
+                      enterkeyhint="go"
                       maxlength="24"
                       aria-describedby="join-error"
                       placeholder="Name on the scoreboard"
@@ -93,8 +96,8 @@
               </section>
               <details class="landing-address">
                 <summary>Playing on another device?</summary>
-                <p>Connect to the same Wi-Fi and open:</p>
-                <code id="landing-network-address">Finding local address…</code>
+                <p id="landing-network-help">Connect to the same Wi-Fi and open:</p>
+                <code id="landing-network-address">Loading address…</code>
               </details>
               <details class="lobby-rules">
                 <summary>How to play</summary>
@@ -162,8 +165,7 @@
       <section class="room-shell hidden" id="room-screen">
         <header class="room-header">
           <div class="room-brand">
-            <span class="mini-logo">Jeopardy!</span
-            ><span class="role-chip" id="role-chip">HOST</span>
+            <span class="mini-logo">Jeopardy!</span>
           </div>
           <div class="room-identity">
             <span class="room-label">ROOM</span
@@ -177,9 +179,7 @@
             ><span class="copy-hint">Copy invite</span>
           </div>
           <div class="room-actions">
-            <span class="connection-pill" id="room-connection-pill"
-              ><span></span> LIVE</span
-            ><button class="text-button" id="leave-room-button" type="button">
+            <button class="text-button" id="leave-room-button" type="button">
               Leave
             </button>
           </div>
