@@ -249,12 +249,12 @@ if (require.main === module) {
   const jeopardy = createJeopardyServer();
   jeopardy.start(port, host).then((address) => {
     const actualPort = typeof address === 'object' ? address.port : port;
-    console.log('\nJeopardy multiplayer is live.');
+    console.log('\nJeoparty! multiplayer is live.');
     console.log('Open one of these addresses:');
     localNetworkUrls(actualPort).forEach((url) => console.log(`  ${url}`));
     console.log('\nPlayers on the same Wi-Fi should use the local-network address.\n');
   }).catch((error) => {
-    console.error('Could not start Jeopardy:', error.message);
+    console.error('Could not start Jeoparty!:', error.message);
     process.exitCode = 1;
   });
 
