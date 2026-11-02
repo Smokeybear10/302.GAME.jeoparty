@@ -2,14 +2,19 @@
 
 const SESSION_KEY = 'jeopardy_multiplayer_session_v1';
 const NAME_KEY = 'jeopardy_multiplayer_name_v1';
+const CATALOG_RENDER_LIMIT = 60;
 
 const elements = {
   connectionLabel: document.querySelector('#connection-label'),
+  createCustomRoomButton: document.querySelector('#create-custom-room-button'),
   createRoomButton: document.querySelector('#create-room-button'),
   joinRoomButton: document.querySelector('#join-room-button'),
   joinRoomForm: document.querySelector('#join-room-form'),
   joinCode: document.querySelector('#join-code'),
+  joinError: document.querySelector('#join-error'),
   landingGameFilter: document.querySelector('#landing-game-filter'),
+  landingYearFilter: document.querySelector('#landing-year-filter'),
+  librarySummary: document.querySelector('#library-summary'),
   landingNetworkAddress: document.querySelector('#landing-network-address'),
   joinName: document.querySelector('#join-name'),
   landingScreen: document.querySelector('#landing-screen'),
@@ -28,23 +33,47 @@ const elements = {
 const socket = io({ autoConnect: false });
 let roomState = null;
 let connected = false;
+let hasConnected = false;
 let resuming = false;
 let mutationPending = false;
+let joining = false;
 let shouldResumeOnConnect = true;
 let networkUrls = [window.location.origin];
 let publicGameCatalog = [];
+let catalogStatus = 'loading';
 let gameFilter = '';
 let landingGameFilter = '';
+let gameYearFilter = 'all';
+let landingYearFilter = 'all';
 let preferredGameId = '';
 let activeDialogKey = '';
+let renderedScreenKey = 'landing';
+let renderedClueKey = '';
 let hostGameListScroll = 0;
-let hostPlayerName = localStorage.getItem(NAME_KEY) || '';
+let customBuilderOpen = false;
+let customBuilderSection = 0;
 const drafts = {
+  hostName: null,
   dailyPlayerId: '',
   dailyWager: '',
   finalWager: '',
   finalResponse: '',
 };
+
+function emptyCustomBoardDraft() {
+  return {
+    title: '',
+    description: '',
+    dailyDouble: '0:0',
+    categories: Array.from({ length: 6 }, () => ({
+      name: '',
+      clues: Array.from({ length: 5 }, () => ({ clue: '', answer: '' })),
+    })),
+    finalJeopardy: { category: '', clue: '', answer: '' },
+  };
+}
+
+let customBoardDraft = emptyCustomBoardDraft();
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (character) => ({
@@ -60,24 +89,92 @@ function escapeAttr(value) {
   return escapeHtml(value);
 }
 
+function catalogYears(catalog) {
+  return [...new Set(catalog.map((game) => game.year).filter(Number.isInteger))]
+    .sort((first, second) => second - first);
+}
+
+function filterCatalog(catalog, search, year) {
+  const normalizedSearch = search.trim().toLowerCase();
+  return catalog.filter((game) => {
+    if (year !== 'all' && String(game.year) !== year) return false;
+    const haystack = `${game.title} ${game.description} ${game.categories.join(' ')}`.toLowerCase();
+    return haystack.includes(normalizedSearch);
+  });
+}
+
+function yearOptions(catalog, selectedYear) {
+  return [
+    '<option value="all">All years</option>',
+    ...catalogYears(catalog).map((year) => `<option value="${year}" ${String(year) === selectedYear ? 'selected' : ''}>${year}</option>`),
+  ].join('');
+}
+
 function formatMoney(value) {
   const number = Number(value) || 0;
   return `${number < 0 ? '-' : ''}$${Math.abs(number).toLocaleString()}`;
 }
 
 function savedSession() {
+  let tabSession;
   try {
-    return JSON.parse(localStorage.getItem(SESSION_KEY));
+    tabSession = sessionStorage.getItem(SESSION_KEY);
   } catch {
     return null;
   }
+  if (tabSession !== null) {
+    try {
+      return JSON.parse(tabSession);
+    } catch {
+      try {
+        sessionStorage.removeItem(SESSION_KEY);
+      } catch {
+        // Storage may be unavailable in a restricted browser context.
+      }
+      return null;
+    }
+  }
+
+  // Migrate the old shared credential once so existing rooms survive the update
+  // without making every same-origin tab resume the same host or player.
+  let legacySession;
+  try {
+    legacySession = localStorage.getItem(SESSION_KEY);
+  } catch {
+    return null;
+  }
+  if (legacySession === null) return null;
+
+  let session;
+  try {
+    session = JSON.parse(legacySession);
+  } catch {
+    localStorage.removeItem(SESSION_KEY);
+    return null;
+  }
+
+  try {
+    sessionStorage.setItem(SESSION_KEY, legacySession);
+  } catch {
+    return session;
+  }
+  localStorage.removeItem(SESSION_KEY);
+  return session;
 }
 
 function saveSession(session) {
-  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify({ ...session, preferredGameId }));
+  localStorage.removeItem(SESSION_KEY);
+}
+
+function setPreferredGame(gameId) {
+  preferredGameId = gameId;
+  const session = savedSession();
+  if (session) saveSession(session);
 }
 
 function clearSession() {
+  sessionStorage.removeItem(SESSION_KEY);
   localStorage.removeItem(SESSION_KEY);
 }
 
@@ -95,16 +192,18 @@ function showToast(message, tone = 'info') {
 
 function setConnectionState(isConnected) {
   connected = isConnected;
+  if (isConnected) hasConnected = true;
   elements.connectionLabel.textContent = isConnected
     ? 'Game server connected'
-    : 'Connection lost — trying to reconnect…';
+    : hasConnected ? 'Connection lost — trying to reconnect…' : 'Connecting to game server…';
   elements.createRoomButton.disabled = !isConnected || resuming;
-  elements.joinRoomButton.disabled = !isConnected || resuming;
+  elements.createCustomRoomButton.disabled = !isConnected || resuming;
+  elements.joinRoomButton.disabled = !isConnected || resuming || joining;
   document.querySelectorAll('.public-game-row').forEach((row) => {
     row.disabled = !isConnected || resuming;
   });
   elements.roomConnectionPill.classList.toggle('offline', !isConnected);
-  elements.roomConnectionPill.innerHTML = `<span></span> ${isConnected ? 'Live' : 'Reconnecting'}`;
+  elements.roomConnectionPill.innerHTML = `<span></span> ${isConnected ? 'Live' : hasConnected ? 'Reconnecting' : 'Connecting'}`;
   document.body.classList.toggle('is-offline', !isConnected);
 }
 
@@ -128,7 +227,7 @@ function request(eventName, payload = {}, { allowWhileResuming = false } = {}) {
   });
 }
 
-async function runAction(action, { quiet = false, lock = true } = {}) {
+async function runAction(action, { quiet = false, lock = true, onError } = {}) {
   if (lock && mutationPending) return null;
   if (lock) {
     mutationPending = true;
@@ -137,6 +236,7 @@ async function runAction(action, { quiet = false, lock = true } = {}) {
   try {
     return await action();
   } catch (error) {
+    onError?.(error);
     if (!quiet) showToast(error.message, 'error');
     return null;
   } finally {
@@ -160,8 +260,10 @@ async function resumeSavedSession() {
   resuming = true;
   setConnectionState(connected);
   try {
-    const response = await request('room:resume', session, { allowWhileResuming: true });
+    const response = await request('room:resume', { code: session.code, token: session.token }, { allowWhileResuming: true });
     roomState = response.state;
+    preferredGameId = roomState.gameCatalog?.some((game) => game.id === session.preferredGameId)
+      ? session.preferredGameId : '';
     saveSession(response.session);
     render();
   } catch (error) {
@@ -215,6 +317,9 @@ function playerById(playerId) {
 function focusSelectorFor(element) {
   if (!element || !elements.roomContent.contains(element)) return '';
   if (element.id) return `#${CSS.escape(element.id)}`;
+  if (element.name && element.matches('input, textarea, select')) {
+    return `[name="${CSS.escape(element.name)}"]`;
+  }
   const actionElement = element.closest('[data-action]');
   if (!actionElement) return '';
   const attributes = ['action', 'playerId', 'gameId', 'correct', 'delta', 'categoryIndex', 'clueIndex'];
@@ -225,13 +330,14 @@ function focusSelectorFor(element) {
 }
 
 function dialogKeyForState() {
+  if (customBuilderOpen && roomState?.phase === 'lobby' && roomState?.role === 'host') return 'custom-builder';
   if (roomState?.phase !== 'board' || !roomState.currentClue) return '';
   const clue = roomState.currentClue;
   return `${clue.category}:${clue.boardValue}:${clue.phase}`;
 }
 
 function manageDialogFocus(previousDialogKey, focusSelector) {
-  const overlay = elements.roomContent.querySelector('.clue-overlay');
+  const overlay = elements.roomContent.querySelector('.clue-overlay, .custom-builder-overlay');
   const gameShell = elements.roomContent.querySelector('.game-shell');
   const nextDialogKey = dialogKeyForState();
   const hasDialog = Boolean(overlay);
@@ -242,7 +348,7 @@ function manageDialogFocus(previousDialogKey, focusSelector) {
     const preservedTarget = previousDialogKey === nextDialogKey && focusSelector
       ? elements.roomContent.querySelector(focusSelector)
       : null;
-    (preservedTarget || overlay.querySelector('.clue-stage'))?.focus();
+    (preservedTarget || overlay.querySelector('.clue-stage, .custom-builder-dialog'))?.focus();
   } else if (previousDialogKey) {
     elements.roomContent.querySelector('.game-titlebar h2')?.focus();
   } else if (focusSelector) {
@@ -253,32 +359,56 @@ function manageDialogFocus(previousDialogKey, focusSelector) {
 
 function renderPublicLobby() {
   if (!elements.publicGameList) return;
-  const normalizedFilter = landingGameFilter.trim().toLowerCase();
-  const filteredGames = publicGameCatalog.filter((game) => {
-    const haystack = `${game.title} ${game.description} ${game.categories.join(' ')}`.toLowerCase();
-    return haystack.includes(normalizedFilter);
-  });
+  if (elements.librarySummary && publicGameCatalog.length > 0) {
+    elements.librarySummary.textContent = `${publicGameCatalog.length.toLocaleString()} games`;
+  }
+  const options = yearOptions(publicGameCatalog, landingYearFilter);
+  if (elements.landingYearFilter.innerHTML !== options) elements.landingYearFilter.innerHTML = options;
+  elements.landingYearFilter.value = landingYearFilter;
+  const filteredGames = filterCatalog(publicGameCatalog, landingGameFilter, landingYearFilter);
 
-  if (publicGameCatalog.length === 0) {
+  if (catalogStatus === 'loading') {
     elements.publicGameList.innerHTML = '<div class="lobby-loading"><span></span>Loading the game library…</div>';
     elements.publicGameCount.textContent = 'Loading boards…';
+  } else if (catalogStatus === 'error') {
+    elements.publicGameList.innerHTML = '<div class="public-game-empty"><p>The archive could not be loaded. You can still join a room or create a custom board.</p><button class="button button-ghost" type="button" data-catalog-retry>Try again</button></div>';
+    elements.publicGameCount.textContent = 'Archive unavailable';
   } else if (filteredGames.length === 0) {
-    elements.publicGameList.innerHTML = '<div class="public-game-empty">No boards match that search.</div>';
+    elements.publicGameList.innerHTML = `<div class="public-game-empty">${publicGameCatalog.length ? 'No boards match that search.' : 'No boards are available yet. Create a custom board to play.'}</div>`;
     elements.publicGameCount.textContent = '0 boards match';
   } else {
-    elements.publicGameList.innerHTML = filteredGames.map((game) => `
-      <button class="public-game-row" type="button" data-public-game-id="${escapeAttr(game.id)}" ${!connected || resuming ? 'disabled' : ''} aria-label="Prepare ${escapeAttr(game.title)}, ${escapeAttr(game.difficulty)} difficulty. Topics: ${escapeAttr(game.categories.join(', '))}. ${escapeAttr(game.description)}">
-        <span class="public-game-title"><i>${String(publicGameCatalog.indexOf(game) + 1).padStart(2, '0')}</i><span><strong>${escapeHtml(game.title)}</strong><small>${escapeHtml(game.description)}</small></span></span>
-        <span class="public-game-topics">${game.categories.slice(0, 2).map((category) => `<i>${escapeHtml(category)}</i>`).join('')}<i>+4</i></span>
-        <span class="public-game-level">${escapeHtml(game.difficulty)}<b aria-hidden="true">›</b></span>
+    const visibleGames = filteredGames.slice(0, CATALOG_RENDER_LIMIT);
+    elements.publicGameList.innerHTML = visibleGames.map((game) => `
+      <button class="public-game-row" type="button" data-public-game-id="${escapeAttr(game.id)}" ${!connected || resuming ? 'disabled' : ''} aria-label="Create room with ${escapeAttr(game.title)}. Categories: ${escapeAttr(game.categories.join(', '))}.">
+        <span class="public-game-title"><span><strong>${escapeHtml(game.title)}</strong><small>${escapeHtml(game.description.replace(' · original broadcast', ''))}</small></span></span>
+        <span class="public-game-topics" title="${escapeAttr(game.categories.join(' · '))}">${escapeHtml(game.categories.join(' · '))}</span>
+        <span class="public-game-level" aria-hidden="true"><b>→</b></span>
       </button>
     `).join('');
-    elements.publicGameCount.textContent = `${filteredGames.length} board${filteredGames.length === 1 ? '' : 's'} match`;
+    elements.publicGameCount.textContent = visibleGames.length < filteredGames.length
+      ? `${visibleGames.length} of ${filteredGames.length} shown`
+      : `${filteredGames.length} board${filteredGames.length === 1 ? '' : 's'}`;
   }
 
   if (elements.landingNetworkAddress) {
     elements.landingNetworkAddress.textContent = preferredNetworkUrl().replace(/^https?:\/\//, '');
   }
+}
+
+async function loadCatalog() {
+  catalogStatus = 'loading';
+  renderPublicLobby();
+  try {
+    const response = await fetch('/api/games', { signal: AbortSignal.timeout(8000) });
+    if (!response.ok) throw new Error('Archive unavailable');
+    const games = await response.json();
+    if (!Array.isArray(games)) throw new Error('Invalid archive response');
+    publicGameCatalog = games;
+    catalogStatus = 'ready';
+  } catch {
+    catalogStatus = 'error';
+  }
+  renderPublicLobby();
 }
 
 function renderRoster({ hostControls = false } = {}) {
@@ -297,127 +427,220 @@ function renderRoster({ hostControls = false } = {}) {
   </ul>`;
 }
 
-function renderHostPlayerControl() {
-  const you = roomState.you;
-  if (you) {
-    return `
-      <div class="host-player-control is-playing">
-        <div class="host-player-copy">
-          <span class="host-player-kicker"><i></i> You are in the game</span>
-          <strong>${escapeHtml(you.name)}</strong>
-          <small>Your buzzer and Final Jeopardy entry will appear alongside the host controls.</small>
-        </div>
-        <button class="button button-secondary" type="button" data-action="host-leave-player">Stop playing</button>
-      </div>`;
+function customSectionComplete(sectionIndex) {
+  if (sectionIndex < 6) {
+    const category = customBoardDraft.categories[sectionIndex];
+    return Boolean(category.name.trim() && category.clues.every((clue) => clue.clue.trim() && clue.answer.trim()));
   }
-  const roomIsFull = roomState.players.length >= 8;
+  const final = customBoardDraft.finalJeopardy;
+  return Boolean(final.category.trim() && final.clue.trim() && final.answer.trim());
+}
+
+function customDraftProblem() {
+  if (!customBoardDraft.title.trim()) return { section: 0, message: 'Give the board a title.' };
+  for (let categoryIndex = 0; categoryIndex < 6; categoryIndex += 1) {
+    const category = customBoardDraft.categories[categoryIndex];
+    if (!category.name.trim()) return { section: categoryIndex, message: `Name category ${categoryIndex + 1}.` };
+    for (let clueIndex = 0; clueIndex < 5; clueIndex += 1) {
+      if (!category.clues[clueIndex].clue.trim()) {
+        return { section: categoryIndex, message: `Add the $${(clueIndex + 1) * 200} clue in category ${categoryIndex + 1}.` };
+      }
+      if (!category.clues[clueIndex].answer.trim()) {
+        return { section: categoryIndex, message: `Add the response for the $${(clueIndex + 1) * 200} clue in category ${categoryIndex + 1}.` };
+      }
+    }
+  }
+  const final = customBoardDraft.finalJeopardy;
+  if (!final.category.trim() || !final.clue.trim() || !final.answer.trim()) {
+    return { section: 6, message: 'Finish the Final Jeopardy category, clue, and response.' };
+  }
+  return null;
+}
+
+function customGamePayload() {
+  return {
+    title: customBoardDraft.title,
+    description: customBoardDraft.description,
+    categories: customBoardDraft.categories.map((category, categoryIndex) => ({
+      name: category.name,
+      clues: category.clues.map((clue, clueIndex) => ({
+        clue: clue.clue,
+        answer: clue.answer,
+        dailyDouble: customBoardDraft.dailyDouble === `${categoryIndex}:${clueIndex}`,
+      })),
+    })),
+    finalJeopardy: { ...customBoardDraft.finalJeopardy },
+  };
+}
+
+function renderCustomBuilderSection() {
+  if (customBuilderSection === 6) {
+    const final = customBoardDraft.finalJeopardy;
+    return `
+      <section class="custom-editor-page final-editor-page" aria-labelledby="custom-section-title">
+        <div class="custom-page-heading"><span>Final</span><h3 id="custom-section-title">Final Jeopardy</h3></div>
+        <div class="custom-final-fields">
+          <label><span>Category</span><input name="final-category" data-custom-field="final-category" maxlength="80" value="${escapeAttr(final.category)}" placeholder="WORLD CAPITALS"></label>
+          <label><span>Clue</span><textarea name="final-clue" data-custom-field="final-clue" maxlength="500" rows="4" placeholder="Enter the Final Jeopardy clue">${escapeHtml(final.clue)}</textarea></label>
+          <label><span>Correct response</span><input name="final-answer" data-custom-field="final-answer" maxlength="240" value="${escapeAttr(final.answer)}" placeholder="What is ...?"></label>
+        </div>
+      </section>`;
+  }
+
+  const category = customBoardDraft.categories[customBuilderSection];
   return `
-    <form class="host-player-control host-player-form" id="host-player-form">
-      <div class="host-player-copy">
-        <span class="host-player-kicker">Want a podium too?</span>
-        <strong>Play while you host</strong>
-        <small>${roomIsFull ? 'All eight contestant spots are filled.' : 'Join the roster and buzz from this screen.'}</small>
+    <section class="custom-editor-page" aria-labelledby="custom-section-title">
+      <div class="custom-page-heading">
+        <span>Category ${customBuilderSection + 1} of 6</span>
+        <label><span class="sr-only">Category name</span><input id="custom-section-title" name="category-${customBuilderSection}" data-custom-field="category-name" data-category-index="${customBuilderSection}" maxlength="60" value="${escapeAttr(category.name)}" placeholder="CATEGORY NAME"></label>
       </div>
-      <label for="host-player-name">Your contestant name</label>
-      <div class="host-player-fields">
-        <input id="host-player-name" name="name" type="text" maxlength="24" value="${escapeAttr(hostPlayerName)}" placeholder="Host name" autocomplete="nickname" required ${roomIsFull ? 'disabled' : ''}>
-        <button class="button button-gold" type="submit" ${roomIsFull ? 'disabled' : ''}>Play too</button>
+      <div class="custom-clue-list">
+        ${category.clues.map((clue, clueIndex) => {
+          const clueValue = (clueIndex + 1) * 200;
+          const clueKey = `${customBuilderSection}:${clueIndex}`;
+          return `
+            <article class="custom-clue-row">
+              <div class="custom-clue-value">
+                <strong>$${clueValue}</strong>
+                <label><input type="radio" name="daily-double" value="${clueKey}" data-custom-field="daily-double" ${customBoardDraft.dailyDouble === clueKey ? 'checked' : ''}> Daily Double</label>
+              </div>
+              <label><span>Clue</span><textarea name="clue-${clueKey}" data-custom-field="clue" data-category-index="${customBuilderSection}" data-clue-index="${clueIndex}" maxlength="500" rows="2" placeholder="Write the clue">${escapeHtml(clue.clue)}</textarea></label>
+              <label><span>Correct response</span><input name="answer-${clueKey}" data-custom-field="answer" data-category-index="${customBuilderSection}" data-clue-index="${clueIndex}" maxlength="240" value="${escapeAttr(clue.answer)}" placeholder="What is ...?"></label>
+            </article>`;
+        }).join('')}
       </div>
-    </form>`;
+    </section>`;
+}
+
+function renderCustomBuilder() {
+  const sections = ['1', '2', '3', '4', '5', '6', 'Final'];
+  return `
+    <div class="custom-builder-overlay" role="dialog" aria-modal="true" aria-labelledby="custom-builder-title">
+      <form class="custom-builder-dialog" id="custom-game-form" tabindex="-1">
+        <header class="custom-builder-header">
+          <div><p class="panel-label">Board editor</p><h2 id="custom-builder-title">Make your own game</h2></div>
+          <button class="icon-button custom-builder-close" type="button" data-action="close-custom-builder" aria-label="Close board editor">×</button>
+        </header>
+        <div class="custom-board-meta">
+          <label><span>Board title</span><input name="custom-title" data-custom-field="title" maxlength="80" value="${escapeAttr(customBoardDraft.title)}" placeholder="Friday night game" required></label>
+          <label><span>Note <em>optional</em></span><input name="custom-description" data-custom-field="description" maxlength="180" value="${escapeAttr(customBoardDraft.description)}" placeholder="Family reunion, study group, etc."></label>
+        </div>
+        <nav class="custom-builder-tabs" aria-label="Board sections">
+          ${sections.map((label, sectionIndex) => `<button type="button" data-action="custom-section" data-section="${sectionIndex}" class="${sectionIndex === customBuilderSection ? 'is-active' : ''} ${customSectionComplete(sectionIndex) ? 'is-complete' : ''}" aria-current="${sectionIndex === customBuilderSection ? 'step' : 'false'}"><span>${customSectionComplete(sectionIndex) ? '✓' : sectionIndex + 1}</span>${label === 'Final' ? 'Final' : `Cat. ${label}`}</button>`).join('')}
+        </nav>
+        ${renderCustomBuilderSection()}
+        <footer class="custom-builder-footer">
+          <button class="text-button clear-custom-button" type="button" data-action="reset-custom-builder">Clear board</button>
+          <div>
+            <button class="button button-secondary" type="button" data-action="previous-custom-section" ${customBuilderSection === 0 ? 'disabled' : ''}>Back</button>
+            ${customBuilderSection < 6
+              ? '<button class="button button-primary" type="button" data-action="next-custom-section">Next</button>'
+              : '<button class="button button-gold" type="submit">Save and select board</button>'}
+          </div>
+        </footer>
+      </form>
+    </div>`;
 }
 
 function renderHostLobby() {
   const catalog = roomState.gameCatalog || [];
+  const connectedPlayers = roomState.players.filter((player) => player.connected).length;
   const preferredGame = catalog.find((game) => game.id === preferredGameId) || null;
-  const normalizedFilter = gameFilter.trim().toLowerCase();
-  const filteredGames = catalog.filter((game) => {
-    const haystack = `${game.title} ${game.description} ${game.categories.join(' ')}`.toLowerCase();
-    return haystack.includes(normalizedFilter);
-  }).sort((firstGame, secondGame) => {
+  const previewGame = preferredGame || catalog[0];
+  const previewCategories = previewGame?.categories || Array.from({ length: 6 }, (_, index) => `Category ${index + 1}`);
+  const filteredGames = filterCatalog(catalog, gameFilter, gameYearFilter).sort((firstGame, secondGame) => {
     if (firstGame.id === preferredGameId) return -1;
     if (secondGame.id === preferredGameId) return 1;
     return catalog.indexOf(firstGame) - catalog.indexOf(secondGame);
   });
-  const urls = networkUrls.filter((url, index, all) => all.indexOf(url) === index);
+  const visibleGames = filteredGames.slice(0, CATALOG_RENDER_LIMIT);
+  const urls = [preferredNetworkUrl()];
 
   return `
     <div class="lobby-layout">
-      <aside class="lobby-sidebar">
+      <section class="lobby-preview ${preferredGame ? 'has-selection' : 'is-unselected'}" aria-labelledby="lobby-preview-title">
+        <header class="lobby-preview-header">
+          <div class="lobby-preview-heading">
+            <h2 id="lobby-preview-title">${escapeHtml(preferredGame?.title || 'Choose an episode below')}</h2>
+            <p>${preferredGame ? escapeHtml(preferredGame.description) : 'Your selected board will appear here.'}</p>
+          </div>
+          <button class="button button-primary lobby-start-button" type="button" data-action="start-game" data-game-id="${escapeAttr(preferredGame?.id || '')}" ${preferredGame && connectedPlayers ? '' : 'disabled'}>Start game <span aria-hidden="true">→</span></button>
+        </header>
+        <div class="lobby-board-preview" role="img" aria-label="${preferredGame ? 'Selected board' : 'Example board preview'}: ${escapeAttr(previewCategories.join(', '))}. Five clues per category, from $200 to $1,000.">
+          ${previewCategories.map((category) => `<div class="lobby-preview-category" aria-hidden="true">${escapeHtml(category)}</div>`).join('')}
+        </div>
+        <div class="lobby-preview-status">
+          <span>${preferredGame ? '30 clues · 6 categories · Final Jeopardy' : 'Select a row in the archive to use that episode.'}</span>
+          <span>${!connectedPlayers ? 'At least one player needed to start' : `${connectedPlayers} player${connectedPlayers === 1 ? '' : 's'} ready`}</span>
+        </div>
+      </section>
+
+      <aside class="lobby-room">
+        <section class="broadcast-card">
+          <div class="broadcast-heading">
+            <p class="panel-label">Room code</p>
+            <span class="live-note"><i></i> Open</span>
+          </div>
+          <button class="giant-code" type="button" data-action="copy-invite" aria-label="Copy player link for room ${escapeAttr(roomState.code)}">${escapeHtml(roomState.code)}<small>Copy player link</small></button>
+          <div class="network-addresses">
+            <span>Join on the same Wi-Fi</span>
+            ${urls.map((url) => `<code>${escapeHtml(url.replace(/^https?:\/\//, ''))}</code>`).join('')}
+          </div>
+        </section>
         <section class="roster-card">
           <div class="panel-heading">
-            <div><p class="panel-label">Contestants</p><h2>${roomState.players.length} / 8 joined</h2></div>
+            <h2>Players <span>${roomState.players.length} / 8</span></h2>
           </div>
-          ${renderHostPlayerControl()}
           ${renderRoster({ hostControls: true })}
         </section>
-        <section class="lobby-guide-card">
-          <p class="panel-label">Host checklist</p>
-          <ul>
-            <li class="done"><span>1</span> Room created</li>
-            <li class="${roomState.players.length ? 'done' : ''}"><span>2</span> Players connected</li>
-            <li class="${preferredGame ? 'done' : ''}"><span>3</span> Choose a board</li>
-          </ul>
+        <section class="host-play-station">
+          ${roomState.you
+            ? `<p class="panel-label">You're playing</p>
+              <h2>${escapeHtml(roomState.you.name)}</h2>
+              <button class="text-button" type="button" data-action="leave-contestants">Switch to host only</button>`
+            : `<h2>Playing too?</h2>
+              <form class="host-contestant-form" id="host-contestant-form">
+                <label class="sr-only" for="host-contestant-name">Your name</label>
+                <input id="host-contestant-name" name="name" maxlength="24" autocomplete="nickname" value="${escapeAttr(drafts.hostName ?? localStorage.getItem(NAME_KEY) ?? '')}" placeholder="Your name" required>
+                <button class="button button-primary" type="submit" ${roomState.players.length >= 8 ? 'disabled' : ''}>${roomState.players.length >= 8 ? 'Room is full' : 'Join as player'}</button>
+              </form>
+              <p>Or stay on this screen to host.</p>`}
         </section>
       </aside>
 
       <section class="game-library">
-        <div class="lobby-section-bar">
-          <strong>Game library</strong>
-          <span>${catalog.length} boards · select one to start</span>
-        </div>
         <div class="library-heading">
-          <div>
-            <p class="panel-label">Tonight's game</p>
-            <h2>Choose a board</h2>
-            <p>Every board has six categories, one Daily Double, and Final Jeopardy.</p>
+          <div class="library-title">
+            <h2>Episode archive</h2>
+            <span>${visibleGames.length < filteredGames.length ? `${visibleGames.length} of ${filteredGames.length}` : filteredGames.length} shown</span>
           </div>
-          <label class="search-field">
-            <span class="sr-only">Filter games</span>
-            <input id="game-filter" type="search" value="${escapeAttr(gameFilter)}" placeholder="Search titles or topics">
-          </label>
+          <div class="library-tools">
+            <button class="button button-secondary" type="button" data-action="open-custom-builder">Custom board</button>
+            <label class="year-select"><span>Year</span><select id="game-year-filter" aria-label="Filter games by year">${yearOptions(catalog, gameYearFilter)}</select></label>
+            <label class="search-field">
+              <span class="sr-only">Filter games</span>
+              <input id="game-filter" type="search" value="${escapeAttr(gameFilter)}" placeholder="Search dates or categories">
+            </label>
+          </div>
         </div>
         <div class="host-game-table">
-          <div class="host-game-head" aria-hidden="true"><span>Board</span><span>Featured topics</span><span>Level</span><span></span></div>
+          <div class="host-game-head" aria-hidden="true"><span>Episode</span><span>Categories</span><span></span></div>
           <div class="host-game-list">
-            ${filteredGames.map((game) => `
-              <button class="host-game-row ${game.id === preferredGameId ? 'is-preferred' : ''}" type="button" data-action="select-game" data-game-id="${escapeAttr(game.id)}" aria-pressed="${game.id === preferredGameId}" aria-label="Select ${escapeAttr(game.title)}, ${escapeAttr(game.difficulty)} difficulty. Topics: ${escapeAttr(game.categories.join(', '))}. ${escapeAttr(game.description)}">
-                <span class="host-game-index">${String(catalog.indexOf(game) + 1).padStart(2, '0')}</span>
+            ${visibleGames.map((game) => `
+              <button class="host-game-row ${game.id === preferredGameId ? 'is-preferred' : ''}" type="button" data-action="select-game" data-game-id="${escapeAttr(game.id)}" aria-pressed="${game.id === preferredGameId}" aria-label="Select ${escapeAttr(game.title)}. Topics: ${escapeAttr(game.categories.join(', '))}. ${escapeAttr(game.description)}">
                 <span class="host-game-copy">
                   <strong>${escapeHtml(game.title)}</strong>
-                  <small>${escapeHtml(game.description)}</small>
+                  <small>${escapeHtml(game.description.replace(' · original broadcast', ''))}</small>
                 </span>
-                <span class="host-game-topics">${game.categories.slice(0, 2).map((category) => `<span>${escapeHtml(category)}</span>`).join('')}</span>
-                <span class="difficulty-tag">${escapeHtml(game.difficulty)}</span>
-                <span class="row-select-mark" aria-hidden="true">${game.id === preferredGameId ? '✓' : '›'}</span>
+                <span class="host-game-topics" title="${escapeAttr(game.categories.join(' · '))}">${escapeHtml(game.categories.join(' · '))}</span>
+                <span class="row-select-mark" aria-hidden="true">${game.id === preferredGameId ? '✓' : ''}</span>
               </button>
             `).join('') || '<div class="no-results">No games match that search.</div>'}
           </div>
         </div>
       </section>
-
-      <aside class="lobby-action-rail">
-        <section class="broadcast-card">
-          <p class="panel-label">Invite players</p>
-          <div class="giant-code">${escapeHtml(roomState.code)}</div>
-          <p class="invite-caption">Friends enter this code or open your invite link.</p>
-          <button class="button button-gold" type="button" data-action="copy-invite">Copy player link</button>
-          <div class="network-addresses">
-            <span>Same-Wi-Fi address</span>
-            ${urls.map((url) => `<code>${escapeHtml(url.replace(/^https?:\/\//, ''))}</code>`).join('')}
-          </div>
-        </section>
-        <section class="selected-board-card ${preferredGame ? 'has-selection' : ''}">
-          <p class="panel-label">Selected board</p>
-          <strong>${escapeHtml(preferredGame?.title || 'Choose from the library')}</strong>
-          <small>${preferredGame ? escapeHtml(preferredGame.categories.join(' · ')) : 'Pick a row in the center panel when you are ready.'}</small>
-          <button class="button button-primary" type="button" data-action="start-game" data-game-id="${escapeAttr(preferredGame?.id || '')}" ${preferredGame ? '' : 'disabled'}>Start selected board</button>
-        </section>
-        <section class="lobby-status-card">
-          <span class="presence-dot"></span>
-          <div><strong>Room is live</strong><small>${preferredGame ? `${escapeHtml(preferredGame.title)} is ready when your players are.` : 'Waiting for you to select a board.'}</small></div>
-        </section>
-      </aside>
-    </div>`;
+    </div>
+    ${customBuilderOpen ? renderCustomBuilder() : ''}`;
 }
 
 function renderPlayerLobby() {
@@ -432,7 +655,7 @@ function renderPlayerLobby() {
         <strong>${escapeHtml(roomState.you?.name || 'Player')}</strong>
       </div>
       <section class="waiting-roster">
-        <p class="panel-label">At the podiums</p>
+        <p class="panel-label">Players</p>
         ${renderRoster()}
       </section>
     </div>`;
@@ -440,6 +663,7 @@ function renderPlayerLobby() {
 
 function renderScoreboard() {
   const ranked = [...roomState.players].sort((first, second) => second.score - first.score);
+  const showScoreControls = roomState.role === 'host' && roomState.phase === 'board';
   return `
     <section class="score-rail" aria-label="Scoreboard">
       <div class="score-heading">
@@ -448,17 +672,20 @@ function renderScoreboard() {
       </div>
       <div class="score-list">
         ${ranked.map((player, index) => `
-          <article class="score-card ${player.id === roomState.you?.id ? 'is-you' : ''}">
-            <div class="place-number">${index + 1}</div>
+          <article class="score-card ${player.id === roomState.you?.id ? 'is-you' : ''} ${player.id === roomState.controlPlayerId ? 'has-control' : ''}">
+            <div class="place-number">${String(ranked.findIndex((candidate) => candidate.score === player.score) + 1).padStart(2, '0')}</div>
             <div class="score-copy">
               <span class="score-name"><i class="presence-dot ${player.connected ? '' : 'offline'}"></i><b>${escapeHtml(player.name)}</b>${player.isHost ? '<em>Host</em>' : ''}</span>
               <strong class="${player.score < 0 ? 'negative' : ''}">${formatMoney(player.score)}</strong>
             </div>
-            ${roomState.role === 'host' ? `
-              <div class="score-adjusters">
-                <button type="button" data-action="adjust-score" data-player-id="${escapeAttr(player.id)}" data-delta="-200" aria-label="Deduct $200 from ${escapeAttr(player.name)}">−</button>
-                <button type="button" data-action="adjust-score" data-player-id="${escapeAttr(player.id)}" data-delta="200" aria-label="Add $200 to ${escapeAttr(player.name)}">+</button>
-              </div>` : ''}
+            ${showScoreControls
+              ? !player.connected && !player.isHost
+                ? `<button class="icon-button score-remove-player" type="button" data-action="remove-player" data-player-id="${escapeAttr(player.id)}" aria-label="Remove disconnected player ${escapeAttr(player.name)}" title="Remove disconnected player">×</button>`
+                : `<div class="score-adjusters">
+                    <button type="button" data-action="adjust-score" data-player-id="${escapeAttr(player.id)}" data-delta="-200" aria-label="Deduct $200 from ${escapeAttr(player.name)}">−</button>
+                    <button type="button" data-action="adjust-score" data-player-id="${escapeAttr(player.id)}" data-delta="200" aria-label="Add $200 to ${escapeAttr(player.name)}">+</button>
+                  </div>`
+              : ''}
           </article>
         `).join('') || '<div class="score-empty">Waiting for players…</div>'}
       </div>
@@ -467,34 +694,47 @@ function renderScoreboard() {
 
 function renderBoardGrid() {
   const game = roomState.game;
+  const renderTile = (category, categoryIndex, clueIndex) => {
+    const clue = category.clues[clueIndex];
+    const unavailable = clue.answered || Boolean(roomState.currentClue) || !roomState.canChooseClue;
+    return `<button
+      class="clue-tile ${clue.answered ? 'answered' : ''}"
+      type="button"
+      data-action="open-clue"
+      data-category-index="${categoryIndex}"
+      data-clue-index="${clueIndex}"
+      ${unavailable ? 'disabled' : ''}
+      aria-label="${escapeAttr(category.name)}, ${formatMoney(clue.value)}${clue.answered ? ', answered' : ''}"
+    ><span>${clue.answered ? '' : formatMoney(clue.value)}</span></button>`;
+  };
   return `
     <div class="board-wrap">
       <div class="board-grid" style="--board-columns: ${game.categories.length}">
         ${game.categories.map((category) => `<div class="category-tile">${escapeHtml(category.name)}</div>`).join('')}
-        ${[0, 1, 2, 3, 4].flatMap((clueIndex) => game.categories.map((category, categoryIndex) => {
-          const clue = category.clues[clueIndex];
-          const unavailable = clue.answered || Boolean(roomState.currentClue) || roomState.role !== 'host';
-          return `<button
-            class="clue-tile ${clue.answered ? 'answered' : ''}"
-            type="button"
-            data-action="open-clue"
-            data-category-index="${categoryIndex}"
-            data-clue-index="${clueIndex}"
-            ${unavailable ? 'disabled' : ''}
-            aria-label="${escapeAttr(category.name)}, ${formatMoney(clue.value)}${clue.answered ? ', answered' : ''}"
-          ><span>${clue.answered ? '' : formatMoney(clue.value)}</span></button>`;
-        })).join('')}
+        ${[0, 1, 2, 3, 4].flatMap((clueIndex) => game.categories.map((category, categoryIndex) => renderTile(category, categoryIndex, clueIndex))).join('')}
       </div>
+    </div>
+    <div class="mobile-board" aria-label="Game board">
+      ${game.categories.map((category, categoryIndex) => `
+        <section class="board-category-group">
+          <h3>${escapeHtml(category.name)}</h3>
+          <div class="mobile-clue-row">${category.clues.map((clue, clueIndex) => renderTile(category, categoryIndex, clueIndex)).join('')}</div>
+        </section>`).join('')}
     </div>`;
 }
 
 function renderHostBoardControls() {
   const hasFinalist = roomState.players.some((player) => player.score > 0);
+  const finalDisabledReason = roomState.currentClue
+    ? 'Finish the active clue first'
+    : !hasFinalist
+      ? 'A player needs a positive score'
+      : '';
   return `
     <div class="host-toolbar">
-      <button class="button button-secondary" type="button" data-action="return-lobby">Change game</button>
-      <button class="button button-secondary" type="button" data-action="reset-game">Reset board</button>
-      <button class="button button-gold" type="button" data-action="start-final" ${!hasFinalist || roomState.currentClue ? 'disabled' : ''} title="A player needs a positive score">Final Jeopardy</button>
+      <button class="button button-secondary" type="button" data-action="return-lobby">Boards</button>
+      <button class="button button-secondary" type="button" data-action="reset-game">Reset</button>
+      <button class="button button-gold" type="button" data-action="start-final" ${finalDisabledReason ? `disabled title="${escapeAttr(finalDisabledReason)}"` : ''}>Final →</button>
     </div>`;
 }
 
@@ -506,20 +746,21 @@ function renderBuzzQueue(clue) {
   if (clue.buzzes.length === 0) {
     return `<div class="buzz-queue empty"><span class="queue-light"></span>${clue.buzzOpen ? 'Buzzers are open' : 'Buzzers are locked'}</div>`;
   }
-  return `<ol class="buzz-queue">
+  return `<ol class="buzz-queue" aria-label="Buzz order">
     ${clue.buzzes.map((buzz) => `<li class="${buzz.position === 1 ? 'first-buzz' : ''}"><span>${buzz.position}</span>${escapeHtml(buzz.name)}</li>`).join('')}
   </ol>`;
 }
 
 function renderDailyWager(clue) {
-  const availablePlayers = roomState.players;
+  const everyonePlays = roomState.players.some((player) => player.isHost);
+  const availablePlayers = roomState.players.filter((player) => player.connected && (!everyonePlays || player.id === roomState.controlPlayerId));
   if (!availablePlayers.length) {
     return `
       <div class="clue-overlay" role="dialog" aria-modal="true" aria-label="Daily Double">
         <div class="clue-stage daily-stage" tabindex="-1">
           <p class="daily-banner">Daily Double</p>
           <h2>A player needs to join before this clue can be wagered.</h2>
-          <button class="button button-secondary" type="button" data-action="skip-clue">Close clue</button>
+          <button class="button button-secondary" type="button" data-action="cancel-clue">Back to board</button>
         </div>
       </div>`;
   }
@@ -533,7 +774,8 @@ function renderDailyWager(clue) {
     <div class="clue-overlay" role="dialog" aria-modal="true" aria-labelledby="daily-title">
       <form class="clue-stage daily-stage" id="daily-wager-form" tabindex="-1">
         <p class="daily-banner">Daily Double</p>
-        <h2 id="daily-title">Choose the player and wager</h2>
+        <h2 id="daily-title">${everyonePlays ? `${escapeHtml(selectedPlayer.name)}'s Daily Double` : 'Choose the player and wager'}</h2>
+        ${everyonePlays && selectedPlayer.id !== roomState.you?.id ? `<p class="waiting-copy">Ask ${escapeHtml(selectedPlayer.name)} for their wager, then enter it below.</p>` : ''}
         <p class="clue-category">${escapeHtml(clue.category)} · ${formatMoney(clue.boardValue)} clue</p>
         <div class="daily-form-grid">
           <label><span>Player</span>
@@ -547,138 +789,47 @@ function renderDailyWager(clue) {
         </div>
         <div class="dialog-actions">
           <button class="button button-primary button-large" type="submit">Show clue</button>
-          <button class="button button-secondary" type="button" data-action="skip-clue">Cancel clue</button>
+          <button class="button button-secondary" type="button" data-action="cancel-clue">Back to board</button>
         </div>
       </form>
     </div>`;
 }
 
-function hostBuzzerPresentation(clue) {
-  const you = roomState.you;
-  if (!you) return null;
-  const yourBuzz = clue.buzzes.find((buzz) => buzz.playerId === you.id);
-  const ineligible = clue.ineligiblePlayerIds.includes(you.id);
-  const canBuzz = connected && !clue.dailyDouble && clue.buzzOpen && !clue.revealed && !yourBuzz && !ineligible;
-
-  if (ineligible) {
-    return {
-      canBuzz,
-      yourBuzz,
-      tone: 'is-locked',
-      label: 'LOCKED OUT',
-      detail: clue.hostKeyOutcome === 'forfeited' ? 'You opened the key and sat out this clue.' : 'You already answered this clue.',
-    };
-  }
-  if (yourBuzz) {
-    if (yourBuzz.position === 1) {
-      return {
-        canBuzz,
-        yourBuzz,
-        tone: 'is-first',
-        label: 'FIRST IN',
-        detail: clue.revealed
-          ? 'Response shown — judge yourself below.'
-          : clue.hostKeyOutcome === 'committed'
-            ? 'Your response is locked — judge yourself below.'
-            : 'Answer aloud, then reveal or open the key to judge.',
-      };
-    }
-    return { canBuzz, yourBuzz, tone: 'is-queued', label: `BUZZED #${yourBuzz.position}`, detail: `You are number ${yourBuzz.position} in the queue.` };
-  }
+function renderHostTurnStatus(clue) {
+  const responder = playerById(clue.responderPlayerId);
+  const connectedPlayers = roomState.players.filter((player) => player.connected).length;
   if (clue.revealed) {
-    return { canBuzz, yourBuzz, tone: 'is-locked', label: 'REVEALED', detail: 'The correct response is now visible.' };
-  }
-  if (!clue.buzzOpen) {
-    return { canBuzz, yourBuzz, tone: 'is-locked', label: 'WAIT', detail: 'Buzzing is currently locked.' };
-  }
-  return { canBuzz, yourBuzz, tone: 'is-open', label: 'BUZZ', detail: 'Buzzers are open — press when ready.' };
-}
-
-function renderHostPlayStation(clue) {
-  const you = roomState.you;
-  if (!you) return '';
-  const dailyPlayer = playerById(clue.dailyPlayerId);
-
-  if (clue.dailyDouble) {
-    const isYours = dailyPlayer?.id === you.id;
-    const responseCommitted = clue.revealed || clue.hostKeyOutcome === 'committed';
     return `
-      <aside class="host-play-station daily-self-station ${isYours ? 'is-yours' : ''}" aria-label="Your contestant status">
-        <div class="host-play-heading"><span>Your podium</span><strong>${escapeHtml(you.name)}</strong></div>
-        <div class="host-daily-state">
-          <span>${isYours ? 'Daily Double' : 'Buzzer locked'}</span>
-          <strong>${isYours ? 'This clue is yours' : `${escapeHtml(dailyPlayer?.name || 'A player')} is answering`}</strong>
-          <p aria-live="polite">${isYours ? (responseCommitted ? 'Your response is locked — score yourself below.' : 'Answer aloud, then reveal or open the key to judge.') : 'Daily Doubles do not use the buzzer.'}</p>
-        </div>
-      </aside>`;
+      <section class="host-turn-status is-revealed" role="status">
+        <span>Answer sent</span>
+        <strong>Shown on contestant screens</strong>
+        <p>The host display stays answer-free. Close the clue when the room is ready.</p>
+      </section>`;
   }
-
-  const buzzer = hostBuzzerPresentation(clue);
-  return `
-    <aside class="host-play-station ${buzzer.tone}" aria-label="Your contestant buzzer">
-      <div class="host-play-heading"><span>Your buzzer</span><strong>${escapeHtml(you.name)}</strong></div>
-      <button class="buzzer host-buzzer ${buzzer.yourBuzz ? 'buzzed' : ''}" type="button" data-action="buzz" ${buzzer.canBuzz ? '' : 'disabled'} aria-label="${buzzer.canBuzz ? `Buzz in as ${escapeAttr(you.name)}` : escapeAttr(buzzer.label)}">
-        <span class="buzzer-face">${escapeHtml(buzzer.label)}</span>
-        <small>${buzzer.canBuzz ? 'Press or tap' : 'Contestant status'}</small>
-      </button>
-      <p class="host-buzzer-status" aria-live="polite">${escapeHtml(buzzer.detail)}</p>
-    </aside>`;
-}
-
-function renderHostAnswerDisclosure(clue) {
-  if (clue.revealed || (!clue.hostKeyAvailable && !clue.hostKeyOpened)) return '';
-  const you = roomState.you;
-  const isFirst = Boolean(you && (clue.dailyDouble ? clue.dailyPlayerId === you.id : clue.buzzes[0]?.playerId === you.id));
-  const selfWasRuledOut = Boolean(you && clue.ineligiblePlayerIds.includes(you.id));
-
-  if (clue.hostKeyOpened) {
-    const status = clue.hostKeyOutcome === 'committed'
-      ? (selfWasRuledOut ? 'Your response was scored' : 'Your response is locked')
-      : clue.hostKeyOutcome === 'forfeited'
-        ? 'You are sitting out this clue'
-        : 'Quizmaster key opened';
+  if (responder) {
+    const checking = clue.selfJudgePlayerId === responder.id;
     return `
-      <div class="host-key-disclosure is-opened">
-        <div>
-          <span>${status}</span>
-          <small>${clue.hostKeyOutcome === 'committed' ? (selfWasRuledOut ? 'Other contestants can continue buzzing.' : 'Judge your committed response below.') : clue.hostKeyOutcome === 'forfeited' ? 'Other contestants can continue buzzing.' : 'Judge contestants with the controls below.'}</small>
-        </div>
-        <div class="host-answer-key" role="status"><span>Host answer key</span><strong>${escapeHtml(clue.expectedAnswer)}</strong></div>
-      </div>`;
+      <section class="host-turn-status ${checking ? 'is-checking' : 'is-answering'}" role="status">
+        <span>${checking ? 'Self-check in progress' : clue.dailyDouble ? 'Daily Double' : 'First buzz'}</span>
+        <strong>${escapeHtml(responder.name)} ${checking ? 'is checking' : 'is answering'}</strong>
+        <p>${checking ? 'The official response is visible only on their screen.' : 'They answer aloud, then check and score themselves on their device.'}</p>
+      </section>`;
   }
-
-  const actionCopy = you
-    ? (isFirst ? 'Lock my response & view key' : clue.dailyDouble ? 'View host key' : 'Sit out this clue & view key')
-    : 'Open host key';
-  const consequenceCopy = you
-    ? (isFirst
-      ? 'Private host screen only — opening commits your spoken response before you judge it.'
-      : clue.dailyDouble
-        ? `Private host screen only — this clue belongs to ${escapeHtml(playerById(clue.dailyPlayerId)?.name || 'another contestant')}.`
-        : 'Private host screen only — opening removes you from this clue so the remote queue stays fair.')
-    : 'Private host screen only — keep the key away from contestants.';
   return `
-      <div class="host-key-disclosure">
-        <div>
-          <span>${you ? 'Playing-host fairness lock' : 'Quizmaster-only aid'}</span>
-          <small id="host-key-consequence">${consequenceCopy}</small>
-        </div>
-        <button class="button ${you ? 'button-gold' : 'button-secondary'}" type="button" data-action="open-host-key" aria-describedby="host-key-consequence">${actionCopy}</button>
-      </div>`;
+    <section class="host-turn-status is-open" role="status">
+      <span>${clue.buzzOpen ? 'Buzzers open' : 'Buzzers closed'}</span>
+      <strong>${clue.buzzOpen ? 'Waiting for a contestant' : 'Waiting on the room'}</strong>
+      <p>${connectedPlayers} connected contestant${connectedPlayers === 1 ? '' : 's'} · the answer never appears on this host display.</p>
+    </section>`;
 }
 
 function renderHostClue(clue) {
   if (clue.phase === 'daily-wager') return renderDailyWager(clue);
-  const scoringPlayers = clue.dailyDouble
-    ? roomState.players.filter((player) => player.id === clue.dailyPlayerId)
-    : [...roomState.players].sort((first, second) => {
-      const firstPosition = clue.buzzes.findIndex((buzz) => buzz.playerId === first.id);
-      const secondPosition = clue.buzzes.findIndex((buzz) => buzz.playerId === second.id);
-      return (firstPosition === -1 ? 99 : firstPosition) - (secondPosition === -1 ? 99 : secondPosition);
-    });
-  const playStation = renderHostPlayStation(clue);
-  const committedHostAttempt = clue.hostKeyOutcome === 'committed'
-    && clue.buzzes[0]?.playerId === roomState.you?.id;
+  const responder = playerById(clue.responderPlayerId);
+  const hasResponder = Boolean(responder);
+  const removeDisconnectedResponder = responder && !responder.connected && !responder.isHost
+    ? `<button class="button button-secondary" type="button" data-action="remove-player" data-player-id="${escapeAttr(responder.id)}">Remove disconnected ${escapeHtml(responder.name)}</button>`
+    : '';
   return `
     <div class="clue-overlay" role="dialog" aria-modal="true" aria-labelledby="clue-question">
       <div class="clue-stage host-clue-stage" tabindex="-1">
@@ -687,100 +838,163 @@ function renderHostClue(clue) {
           <strong>${formatMoney(clue.value)}</strong>
         </div>
         <h2 class="clue-question" id="clue-question">${escapeHtml(clue.question)}</h2>
-        ${renderHostAnswerDisclosure(clue)}
-        ${clue.revealed ? `<div class="revealed-answer"><span>Correct response</span><strong>${escapeHtml(clue.answer)}</strong></div>` : ''}
-        <div class="host-clue-workspace ${playStation ? 'has-self-play' : ''}">
-          ${playStation}
-          <div class="host-moderation-column">
-            ${renderBuzzQueue(clue)}
-            <div class="judge-grid">
-              ${scoringPlayers.map((player) => {
-                const ineligible = clue.ineligiblePlayerIds.includes(player.id);
-                const isActiveResponder = clue.dailyDouble
-                  ? player.id === clue.dailyPlayerId
-                  : clue.buzzes[0]?.playerId === player.id;
-                const isSelf = player.id === roomState.you?.id;
-                const selfResponseCommitted = clue.revealed || clue.hostKeyOutcome === 'committed';
-                const scoringDisabled = ineligible || !isActiveResponder || (isSelf && !selfResponseCommitted);
-                return `<article class="judge-card ${ineligible ? 'ruled-out' : ''} ${isSelf ? 'is-self' : ''}">
-                  <span>${escapeHtml(player.name)}${isSelf ? ' <em>You</em>' : ''}</span>
-                  <strong>${formatMoney(player.score)}</strong>
-                  <div>
-                    <button class="judge-correct" type="button" data-action="score-clue" data-player-id="${escapeAttr(player.id)}" data-correct="true" ${scoringDisabled ? 'disabled' : ''}>Correct</button>
-                    <button class="judge-wrong" type="button" data-action="score-clue" data-player-id="${escapeAttr(player.id)}" data-correct="false" ${scoringDisabled ? 'disabled' : ''}>Incorrect</button>
-                  </div>
-                </article>`;
-              }).join('') || '<div class="no-players-clue">No players are in the room yet.</div>'}
-            </div>
-          </div>
+        <div class="host-clue-workspace">
+          ${renderHostTurnStatus(clue)}
+          ${renderBuzzQueue(clue)}
         </div>
         <div class="dialog-actions host-clue-actions">
-          ${!clue.revealed ? `<button class="button button-gold" type="button" data-action="reveal-answer">Reveal response</button>` : ''}
-          ${!clue.dailyDouble && !clue.revealed ? `<button class="button button-secondary" type="button" data-action="reset-buzzers" ${committedHostAttempt ? 'disabled title="Score your committed response before resetting buzzers" aria-label="Reset buzzers unavailable: score your committed response first"' : ''}>Reset buzzers</button>` : ''}
-          <button class="button button-secondary" type="button" data-action="skip-clue">${clue.revealed ? 'Close clue' : 'No answer / close'}</button>
+          ${!clue.revealed && !hasResponder ? '<button class="button button-gold" type="button" data-action="reveal-answer">Show answer to players</button>' : ''}
+          ${!clue.dailyDouble && !clue.revealed ? `<button class="button button-secondary" type="button" data-action="reset-buzzers" ${clue.selfJudgePlayerId ? 'disabled title="A contestant is checking their response"' : ''}>Reset buzzers</button>` : ''}
+          ${removeDisconnectedResponder}
+          <button class="button button-secondary" type="button" data-action="skip-clue">${clue.revealed ? 'Close clue' : 'End clue'}</button>
         </div>
       </div>
     </div>`;
 }
 
+function renderPlayerTurnState(clue, you, yourBuzz, ineligible) {
+  const responder = playerById(clue.responderPlayerId);
+  const isActive = responder?.id === you?.id;
+  if (clue.revealed) {
+    return `
+      <section class="self-judge-panel is-public" role="status">
+        <span>Official response</span>
+        <strong class="private-answer">${escapeHtml(clue.answer)}</strong>
+        <p>No contestant claimed it. The host will close the clue.</p>
+      </section>`;
+  }
+  if (isActive && clue.privateAnswer) {
+    return `
+      <section class="self-judge-panel is-open" aria-labelledby="private-answer-label">
+        <span id="private-answer-label">Official response · only on your screen</span>
+        <strong class="private-answer">${escapeHtml(clue.privateAnswer)}</strong>
+        <div class="self-judge-actions">
+          <button class="judge-correct" type="button" data-action="self-score-clue" data-correct="true">I was correct</button>
+          <button class="judge-wrong" type="button" data-action="self-score-clue" data-correct="false">I was incorrect</button>
+        </div>
+      </section>`;
+  }
+  if (isActive) {
+    return `
+      <section class="self-judge-panel is-ready">
+        <span>${clue.dailyDouble ? 'This one is yours' : 'Your turn'}</span>
+        <strong>Say your response out loud</strong>
+        <button class="button button-gold button-large" type="button" data-action="open-player-answer" ${clue.canOpenAnswer ? '' : 'disabled'}>Check my response</button>
+      </section>`;
+  }
+  if (!connected || !roomState.hostConnected) {
+    return `<div class="player-turn-state is-paused" role="status"><strong>${connected ? 'Host disconnected' : 'Reconnecting'}</strong><span>Play resumes when the connection returns.</span></div>`;
+  }
+  if (ineligible) {
+    return `<div class="player-turn-state is-locked" role="status"><strong>You’ve answered this clue</strong><span>${responder ? `${escapeHtml(responder.name)} is ${clue.selfJudgePlayerId ? 'checking their response' : 'answering'} now.` : 'Waiting for this clue to finish.'}</span></div>`;
+  }
+  if (yourBuzz) {
+    return `<div class="player-turn-state is-queued" role="status"><strong>${yourBuzz.position === 2 ? 'You’re next' : `You’re #${yourBuzz.position} in the buzz order`}</strong><span>${escapeHtml(responder?.name || 'The first contestant')} is answering.</span></div>`;
+  }
+  if (clue.dailyDouble) {
+    const dailyPlayer = playerById(clue.dailyPlayerId);
+    return `<div class="player-turn-state" role="status"><strong>${escapeHtml(dailyPlayer?.name || 'Another player')}’s Daily Double</strong><span>${clue.selfJudgePlayerId ? 'They’re checking their response.' : 'Only they can answer this clue.'}</span></div>`;
+  }
+  if (responder) {
+    return `<div class="player-turn-state" role="status"><strong>${escapeHtml(responder.name)} is ${clue.selfJudgePlayerId ? 'checking' : 'answering'}</strong><span>${clue.buzzOpen ? 'Buzz to join the queue.' : 'Wait for the next turn.'}</span></div>`;
+  }
+  if (!clue.buzzOpen) {
+    return '<div class="player-turn-state is-paused" role="status"><strong>Buzzers paused</strong><span>Wait for the room creator to reopen them.</span></div>';
+  }
+  return '<div class="player-turn-state is-open" role="status"><strong>Buzzers open</strong><span>First buzz answers.</span></div>';
+}
+
 function renderPlayerClue(clue) {
   if (clue.phase === 'daily-wager') {
+    if (roomState.role === 'host') return renderDailyWager(clue);
+    const choosingPlayer = playerById(roomState.controlPlayerId);
     return `
       <div class="clue-overlay player-overlay" role="dialog" aria-modal="true" aria-labelledby="player-daily-title">
         <div class="clue-stage player-clue-stage daily-stage" tabindex="-1">
           <p class="daily-banner">Daily Double</p>
-          <h2 id="player-daily-title">The host is setting the wager.</h2>
-          <p class="waiting-copy">Hold tight — the clue is coming next.</p>
+          <h2 id="player-daily-title">${choosingPlayer?.id === roomState.you?.id ? 'This Daily Double is yours.' : choosingPlayer ? `${escapeHtml(choosingPlayer.name)} is wagering.` : 'The host is setting the wager.'}</h2>
+          <p class="waiting-copy">${choosingPlayer?.id === roomState.you?.id ? `Say your wager aloud, up to ${formatMoney(Math.max(roomState.you.score, 1000))}. The room creator will enter it.` : 'The clue appears when the wager is locked.'}</p>
         </div>
       </div>`;
   }
   const you = roomState.you;
   const yourBuzz = clue.buzzes.find((buzz) => buzz.playerId === you?.id);
   const ineligible = clue.ineligiblePlayerIds.includes(you?.id);
-  const dailyPlayer = playerById(clue.dailyPlayerId);
   const canBuzz = connected && roomState.hostConnected && !clue.dailyDouble && clue.buzzOpen && !clue.revealed && !yourBuzz && !ineligible;
-  let buzzerCopy = 'BUZZ';
-  if (yourBuzz) buzzerCopy = yourBuzz.position === 1 ? 'FIRST IN' : `BUZZED #${yourBuzz.position}`;
-  if (ineligible) buzzerCopy = 'LOCKED OUT';
-  if (!clue.buzzOpen && !yourBuzz) buzzerCopy = 'WAIT';
-  if (!roomState.hostConnected) buzzerCopy = 'HOST OFFLINE';
 
   return `
     <div class="clue-overlay player-overlay" role="dialog" aria-modal="true" aria-labelledby="player-clue-question">
-      <div class="clue-stage player-clue-stage" tabindex="-1">
+      <div class="clue-stage player-clue-stage player-clue-card" tabindex="-1">
         <div class="clue-topline">
           <span>${clue.dailyDouble ? 'Daily Double · ' : ''}${escapeHtml(clue.category)}</span>
           <strong>${formatMoney(clue.value)}</strong>
         </div>
         <h2 class="clue-question" id="player-clue-question">${escapeHtml(clue.question)}</h2>
-        ${clue.revealed ? `<div class="revealed-answer"><span>Correct response</span><strong>${escapeHtml(clue.answer)}</strong></div>` : ''}
-        ${clue.dailyDouble ? `
-          <div class="daily-player-callout ${dailyPlayer?.id === you?.id ? 'is-you' : ''}">
-            <span>${dailyPlayer?.id === you?.id ? 'This one is yours' : 'Answering this clue'}</span>
-            <strong>${escapeHtml(dailyPlayer?.name || 'Player')}</strong>
-          </div>` : `
-          <button class="buzzer ${yourBuzz ? 'buzzed' : ''}" type="button" data-action="buzz" ${canBuzz ? '' : 'disabled'}>
-            <span class="buzzer-face">${buzzerCopy}</span>
-            <small>${canBuzz ? 'Tap now' : yourBuzz ? 'The host has your buzz' : 'Watch the host screen'}</small>
-          </button>`}
-        ${clue.dailyDouble ? '' : renderBuzzQueue(clue)}
+        <div class="player-clue-controls">
+          <div class="player-clue-action ${canBuzz ? 'has-buzzer' : ''}">
+            ${canBuzz ? `<button class="buzzer" type="button" data-action="buzz" aria-label="Buzz in" aria-keyshortcuts="Space">
+              <span class="buzzer-face">BUZZ</span>
+              <small><kbd>SPACE</kbd> / tap</small>
+            </button>` : ''}
+            ${renderPlayerTurnState(clue, you, yourBuzz, ineligible)}
+          </div>
+          ${clue.dailyDouble || !clue.buzzes.length ? '' : renderBuzzQueue(clue)}
+          <div class="player-clue-footer">
+            ${roomState.role === 'host' ? renderCreatorClueControls(clue) : ''}
+            ${clue.canSkipClue ? `
+              <details class="player-skip-controls">
+                <summary id="player-skip-toggle">Skip clue</summary>
+                <div class="player-skip-confirm">
+                  <p>End this clue for everyone? Current scores stay as they are.</p>
+                  <div class="player-skip-actions">
+                    <button class="button button-secondary" type="button" data-action="cancel-player-skip">Cancel</button>
+                    <button class="button player-skip-button" type="button" data-action="player-skip-clue" data-clue-key="${escapeAttr(clue.clueKey)}" ${connected ? '' : 'disabled'}>Skip for everyone</button>
+                  </div>
+                </div>
+              </details>` : ''}
+          </div>
+        </div>
       </div>
     </div>`;
 }
 
+function renderCreatorClueControls(clue) {
+  const responder = playerById(clue.responderPlayerId);
+  return `
+    <details class="creator-controls">
+      <summary>Room controls</summary>
+      <div class="dialog-actions host-clue-actions">
+        ${!clue.revealed && !responder ? '<button class="button button-secondary" type="button" data-action="reveal-answer">Reveal unclaimed answer</button>' : ''}
+        ${!clue.dailyDouble && !clue.revealed ? `<button class="button button-secondary" type="button" data-action="reset-buzzers" ${clue.selfJudgePlayerId ? 'disabled title="A player is checking their response"' : ''}>Reset buzzers</button>` : ''}
+        ${responder && !responder.connected && !responder.isHost ? `<button class="button button-secondary" type="button" data-action="remove-player" data-player-id="${escapeAttr(responder.id)}">Remove disconnected ${escapeHtml(responder.name)}</button>` : ''}
+        <button class="button button-secondary" type="button" data-action="skip-clue">${clue.revealed ? 'Close clue' : 'End clue'}</button>
+      </div>
+    </details>`;
+}
+
 function renderBoard() {
+  const allClues = roomState.game.categories.flatMap((category) => category.clues);
+  const answeredCount = allClues.filter((clue) => clue.answered).length;
+  const choosingPlayer = playerById(roomState.controlPlayerId);
+  const everyonePlays = roomState.players.some((player) => player.isHost);
+  const finished = answeredCount === allClues.length;
   return `
     <div class="game-shell">
       <div class="game-main">
         <header class="game-titlebar">
-          <div><p class="panel-label">Now playing</p><h2 tabindex="-1">${escapeHtml(roomState.game.title)}</h2></div>
+          <div><p class="panel-label">Board · ${answeredCount}/${allClues.length} played</p><h2 tabindex="-1">${escapeHtml(roomState.game.title)}</h2></div>
           ${roomState.role === 'host' ? renderHostBoardControls() : `<div class="player-score-chip"><span>Your score</span><strong>${formatMoney(roomState.you?.score)}</strong></div>`}
         </header>
+        ${finished ? `<section class="board-finished"><h3>That's the board.</h3><p>${roomState.role === 'host' ? 'Head to Final Jeopardy, or choose another game.' : 'The room creator can start Final Jeopardy or choose another game.'}</p></section>` : `
+          <div class="board-turn-strip ${roomState.canChooseClue ? 'is-your-turn' : ''}">
+            <strong>${roomState.canChooseClue ? 'Your pick' : choosingPlayer ? `${escapeHtml(choosingPlayer.name)} picks next` : everyonePlays ? 'Waiting for a player' : 'Host picks the next clue'}</strong>
+            <span>${everyonePlays ? 'Answer correctly to choose the next clue.' : 'Pick a category and value. Everyone gets a buzzer.'}</span>
+          </div>`}
         ${renderBoardGrid()}
       </div>
       ${renderScoreboard()}
     </div>
-    ${roomState.currentClue ? (roomState.role === 'host' ? renderHostClue(roomState.currentClue) : renderPlayerClue(roomState.currentClue)) : ''}`;
+    ${roomState.currentClue ? (roomState.you ? renderPlayerClue(roomState.currentClue) : renderHostClue(roomState.currentClue)) : ''}`;
 }
 
 function submissionStatus(submission, type) {
@@ -789,108 +1003,50 @@ function submissionStatus(submission, type) {
   return `<li class="${isYou ? 'is-you' : ''}"><span class="presence-dot ${complete ? '' : 'waiting'}"></span><strong>${escapeHtml(submission.name)}${isYou ? ' <i>You</i>' : ''}</strong><em>${complete ? 'Ready' : 'Waiting'}</em></li>`;
 }
 
-function renderHostFinalEntry(final) {
-  const you = roomState.you;
-  if (!you || final.phase === 'complete') return '';
-
-  const heading = `
-    <div class="host-final-entry-heading">
-      <span>Your contestant entry</span>
-      <strong>${escapeHtml(you.name)}</strong>
-    </div>`;
-
-  if (!final.eligible) {
-    return `
-      <section class="host-final-entry is-ineligible" aria-label="Your Final Jeopardy status">
-        ${heading}
-        <div class="host-final-entry-state"><strong>Watching this Final</strong><p>A positive score is required to wager.</p></div>
-      </section>`;
-  }
-
-  if (final.phase === 'wager') {
-    const maxWager = final.yourMaxWager ?? you.score ?? 0;
-    return `
-      <section class="host-final-entry" aria-label="Your Final Jeopardy wager">
-        ${heading}
-        ${final.yourWagerSubmitted
-          ? `<div class="host-final-entry-state is-locked"><span>Wager locked</span><strong>${formatMoney(final.yourWager)}</strong></div>`
-          : `<form id="final-wager-form" class="final-entry-form host-final-form">
-              <label><span>Your wager · max ${formatMoney(maxWager)}</span><input id="final-wager" type="number" name="wager" min="0" max="${maxWager}" step="1" value="${escapeAttr(drafts.finalWager)}" required></label>
-              <button class="button button-gold" type="submit">Lock my wager</button>
-            </form>`}
-      </section>`;
-  }
-
-  if (final.phase === 'clue') {
-    return `
-      <section class="host-final-entry" aria-label="Your Final Jeopardy response">
-        ${heading}
-        ${final.yourResponseSubmitted
-          ? '<div class="host-final-entry-state is-locked"><strong>Response locked</strong><p>Your entry stays hidden until the answer reveal.</p></div>'
-          : `<form id="final-response-form" class="final-entry-form host-final-form">
-              <label><span>Your response</span><input id="final-response" type="text" name="response" maxlength="200" value="${escapeAttr(drafts.finalResponse)}" placeholder="What is…?" required autocomplete="off"></label>
-              <button class="button button-gold" type="submit">Lock my response</button>
-            </form>`}
-      </section>`;
-  }
-
-  const submission = final.submissions.find((item) => item.playerId === you.id);
-  return `
-    <section class="host-final-entry" aria-label="Your Final Jeopardy result">
-      ${heading}
-      <div class="host-final-entry-state ${submission?.scored ? 'is-locked' : ''}">
-        <strong>${submission?.scored ? (final.yourResult ? 'Marked correct' : 'Marked incorrect') : 'Judge your response below'}</strong>
-        <p>${submission?.scored ? 'Your score has been updated.' : 'Your response appears with the other contestants.'}</p>
-      </div>
-    </section>`;
-}
-
 function renderFinalHost(final) {
   if (final.phase === 'wager') {
+    const pending = final.submissions.filter((submission) => !submission.wagerSubmitted).length;
     return `
       <div class="final-panel">
         <p class="final-wordmark">FINAL JEOPARDY</p>
         <span class="final-category">${escapeHtml(final.category)}</span>
         <h2>Players are placing their wagers.</h2>
-        ${renderHostFinalEntry(final)}
         <ul class="submission-list">${final.submissions.map((submission) => submissionStatus(submission, 'wager')).join('')}</ul>
-        <button class="button button-gold button-large" type="button" data-action="advance-final">Lock wagers & reveal clue</button>
+        <button class="button button-gold button-large" type="button" data-action="advance-final">Lock wagers & reveal clue${pending ? ` · ${pending} waiting` : ''}</button>
       </div>`;
   }
   if (final.phase === 'clue') {
+    const pending = final.submissions.filter((submission) => !submission.responseSubmitted).length;
     return `
       <div class="final-panel final-clue-panel">
         <p class="final-wordmark">FINAL JEOPARDY</p>
         <span class="final-category">${escapeHtml(final.category)}</span>
         <h2>${escapeHtml(final.clue)}</h2>
-        ${renderHostFinalEntry(final)}
         <ul class="submission-list">${final.submissions.map((submission) => submissionStatus(submission, 'response')).join('')}</ul>
-        <button class="button button-gold button-large" type="button" data-action="advance-final">Close responses & reveal answer</button>
+        <button class="button button-gold button-large" type="button" data-action="advance-final">Send answer to contestants${pending ? ` · ${pending} waiting` : ''}</button>
       </div>`;
   }
   if (final.phase === 'answer') {
+    const pending = final.submissions.filter((submission) => !submission.scored).length;
     return `
       <div class="final-panel final-judge-panel">
         <p class="final-wordmark">FINAL JEOPARDY</p>
         <span class="final-category">${escapeHtml(final.category)}</span>
         <h2>${escapeHtml(final.clue)}</h2>
-        <div class="final-answer"><span>Correct response</span><strong>${escapeHtml(final.answer)}</strong></div>
-        ${renderHostFinalEntry(final)}
+        <div class="host-turn-status ${pending ? 'is-checking' : 'is-revealed'}" role="status">
+          <span>Private self-check</span>
+          <strong>${pending ? `${pending} contestant${pending === 1 ? '' : 's'} still checking` : 'Every response is scored'}</strong>
+          <p>The official response and submitted answers stay on contestant screens. The host sees status only.</p>
+        </div>
         <div class="final-response-grid">
           ${final.submissions.map((submission) => `
             <article class="final-response-card ${submission.scored ? 'scored' : ''}">
-              <div><span>${escapeHtml(submission.name)}</span><strong>${formatMoney(submission.wager)}</strong></div>
-              <blockquote>${escapeHtml(submission.response)}</blockquote>
-              ${submission.scored
-                ? `<p class="result-stamp ${submission.correct ? 'correct' : 'incorrect'}">${submission.correct ? 'Correct' : 'Incorrect'}</p>`
-                : `<div class="response-actions">
-                    <button class="judge-correct" type="button" data-action="score-final" data-player-id="${escapeAttr(submission.playerId)}" data-correct="true">Correct</button>
-                    <button class="judge-wrong" type="button" data-action="score-final" data-player-id="${escapeAttr(submission.playerId)}" data-correct="false">Incorrect</button>
-                  </div>`}
+              <div><span>${escapeHtml(submission.name)}</span><strong>${submission.scored ? 'Scored' : 'Checking'}</strong></div>
+              <p class="result-stamp ${submission.scored ? (submission.correct ? 'correct' : 'incorrect') : ''}">${submission.scored ? (submission.correct ? 'Self-marked correct' : 'Self-marked incorrect') : 'Waiting on contestant'}</p>
             </article>
           `).join('')}
         </div>
-        <button class="button button-gold button-large" type="button" data-action="finish-final" ${final.submissions.every((submission) => submission.scored) ? '' : 'disabled'}>Show final standings</button>
+        <button class="button button-gold button-large" type="button" data-action="finish-final">${pending ? 'Finish with pending marked incorrect' : 'Show final standings'}</button>
       </div>`;
   }
   return renderFinalStandings();
@@ -902,11 +1058,12 @@ function renderFinalStandings() {
     <div class="final-panel standings-panel">
       <p class="final-wordmark">FINAL SCORES</p>
       <div class="podium-list">
-        ${ranked.map((player, index) => `
-          <article class="podium-row place-${index + 1}">
-            <span>${index + 1}</span><strong>${escapeHtml(player.name)}</strong><em>${formatMoney(player.score)}</em>
-          </article>
-        `).join('')}
+        ${ranked.map((player) => {
+          const place = ranked.findIndex((candidate) => candidate.score === player.score) + 1;
+          return `<article class="podium-row place-${place}">
+            <span>${place}</span><strong>${escapeHtml(player.name)}</strong><em>${formatMoney(player.score)}</em>
+          </article>`;
+        }).join('')}
       </div>
       ${roomState.role === 'host' ? '<button class="button button-gold button-large" type="button" data-action="return-lobby">Choose another game</button>' : '<p class="waiting-copy">The host can start another game from here.</p>'}
     </div>`;
@@ -957,41 +1114,84 @@ function renderFinalPlayer(final) {
       </div>`;
   }
   if (final.phase === 'answer') {
-    const submission = final.submissions.find((item) => item.playerId === you?.id);
     return `
       <div class="final-panel player-final-panel">
         <p class="final-wordmark">FINAL JEOPARDY</p>
         <span class="final-category">${escapeHtml(final.category)}</span>
         <h2>${escapeHtml(final.clue)}</h2>
         <div class="final-answer"><span>Correct response</span><strong>${escapeHtml(final.answer)}</strong></div>
-        <div class="submission-confirmed">
-          <span>${submission?.scored ? 'Result' : 'The host is judging responses'}</span>
-          <strong>${submission?.scored ? (final.yourResult ? 'Correct' : 'Incorrect') : 'Stand by'}</strong>
-        </div>
+        <section class="final-self-judge">
+          <span>Your locked response · ${formatMoney(final.yourWager)}</span>
+          <blockquote>${escapeHtml(final.yourResponse || '(No response submitted)')}</blockquote>
+          ${final.canSelfScore
+            ? `<p>Compare the two, then score your own response.</p>
+              <div class="self-judge-actions">
+                <button class="judge-correct" type="button" data-action="self-score-final" data-correct="true">I was correct</button>
+                <button class="judge-wrong" type="button" data-action="self-score-final" data-correct="false">I was incorrect</button>
+              </div>`
+            : `<div class="submission-confirmed"><span>Result locked</span><strong>${final.yourResult ? 'Correct' : 'Incorrect'}</strong></div>`}
+        </section>
       </div>`;
   }
   return renderFinalStandings();
 }
 
 function renderFinal() {
+  const final = roomState.final;
   return `
     <div class="final-stage">
-      ${roomState.role === 'host' ? renderFinalHost(roomState.final) : renderFinalPlayer(roomState.final)}
+      <div class="final-main">
+        ${roomState.you ? renderFinalPlayer(final) : renderFinalHost(final)}
+        ${roomState.role === 'host' && roomState.you && final.phase !== 'complete' ? renderCreatorFinalControls(final) : ''}
+      </div>
       <aside class="final-score-strip">${renderScoreboard()}</aside>
     </div>`;
 }
 
+function renderCreatorFinalControls(final) {
+  const statusType = final.phase === 'wager' ? 'wager' : 'response';
+  const pending = final.submissions.filter((submission) => final.phase === 'wager'
+    ? !submission.wagerSubmitted
+    : final.phase === 'clue' ? !submission.responseSubmitted : !submission.scored).length;
+  const yourEntryPending = final.eligible && (final.phase === 'wager'
+    ? !final.yourWagerSubmitted
+    : final.phase === 'clue' ? !final.yourResponseSubmitted : final.canSelfScore);
+  const action = final.phase === 'answer' ? 'finish-final' : 'advance-final';
+  const actionLabel = final.phase === 'wager' ? 'Reveal Final clue' : final.phase === 'clue' ? 'Reveal answer' : 'Show final standings';
+  return `
+    <section class="final-room-controls">
+      <p class="panel-label">Room progress · ${pending ? `${pending} waiting` : 'Everyone is ready'}</p>
+      ${final.phase === 'answer'
+        ? `<ul class="submission-list">${final.submissions.map((submission) => `<li><span class="presence-dot ${submission.scored ? '' : 'waiting'}"></span><strong>${escapeHtml(submission.name)}</strong><em>${submission.scored ? 'Scored' : 'Checking'}</em></li>`).join('')}</ul>`
+        : `<ul class="submission-list">${final.submissions.map((submission) => submissionStatus(submission, statusType)).join('')}</ul>`}
+      <button class="button button-secondary" type="button" data-action="${action}" ${yourEntryPending ? 'disabled' : ''}>${actionLabel}</button>
+      ${yourEntryPending ? '<p class="waiting-copy">Complete your own turn first.</p>' : ''}
+    </section>`;
+}
+
 function renderRoom() {
   const previousDialogKey = activeDialogKey;
-  const focusSelector = focusSelectorFor(document.activeElement);
-  const hostNameSelection = document.activeElement?.id === 'host-player-name'
-    ? { start: document.activeElement.selectionStart, end: document.activeElement.selectionEnd }
+  const clueKey = roomState.currentClue?.clueKey || '';
+  const creatorControlsOpen = clueKey && clueKey === renderedClueKey
+    && elements.roomContent.querySelector('details.creator-controls')?.open;
+  const skipControlsOpen = clueKey && clueKey === renderedClueKey
+    && elements.roomContent.querySelector('details.player-skip-controls')?.open;
+  const activeElement = document.activeElement;
+  const focusSelector = focusSelectorFor(activeElement);
+  const inputSelection = focusSelector && activeElement?.matches?.('input, textarea')
+    && typeof activeElement.selectionStart === 'number'
+    && typeof activeElement.selectionEnd === 'number'
+    ? {
+        start: activeElement.selectionStart,
+        end: activeElement.selectionEnd,
+      }
     : null;
   elements.roomCodeButton.textContent = roomState.code;
-  elements.roleChip.textContent = roomState.role === 'host' ? (roomState.you ? 'HOST + PLAYER' : 'HOST') : 'PLAYER';
+  const creatorPlaying = roomState.role === 'host' && Boolean(roomState.you);
+  elements.roleChip.textContent = creatorPlaying ? 'Playing · Room creator' : roomState.role === 'host' ? 'Room creator' : 'Player';
   elements.roleChip.classList.toggle('player-role', roomState.role === 'player');
-  elements.roleChip.classList.toggle('dual-role', roomState.role === 'host' && Boolean(roomState.you));
-  elements.roomHeader.classList.toggle('dual-role-header', roomState.role === 'host' && Boolean(roomState.you));
+  elements.roleChip.classList.toggle('dual-role', creatorPlaying);
+  elements.roomHeader.classList.toggle('dual-role-header', creatorPlaying);
   elements.leaveRoomButton.textContent = roomState.role === 'host' ? 'End room' : 'Leave';
 
   const hostOfflineNotice = roomState.role === 'player' && !roomState.hostConnected
@@ -1007,19 +1207,26 @@ function renderRoom() {
   }
   const hostGameList = elements.roomContent.querySelector('.host-game-list');
   if (hostGameList) hostGameList.scrollTop = hostGameListScroll;
+  const creatorControls = elements.roomContent.querySelector('details.creator-controls');
+  if (creatorControls) creatorControls.open = Boolean(creatorControlsOpen);
+  const skipControls = elements.roomContent.querySelector('details.player-skip-controls');
+  if (skipControls) skipControls.open = Boolean(skipControlsOpen);
+  renderedClueKey = clueKey;
   manageDialogFocus(previousDialogKey, focusSelector);
-  if (hostNameSelection) {
-    const hostNameInput = elements.roomContent.querySelector('#host-player-name');
-    const valueLength = hostNameInput?.value.length || 0;
-    hostNameInput?.setSelectionRange(
-      Math.min(hostNameSelection.start ?? valueLength, valueLength),
-      Math.min(hostNameSelection.end ?? valueLength, valueLength),
+  if (inputSelection) {
+    const input = elements.roomContent.querySelector(focusSelector);
+    const valueLength = input?.value.length || 0;
+    input?.focus();
+    input?.setSelectionRange?.(
+      Math.min(inputSelection.start, valueLength),
+      Math.min(inputSelection.end, valueLength),
     );
   }
 }
 
 function render() {
   const inRoom = Boolean(roomState);
+  const screenKey = inRoom ? `${roomState.code}:${roomState.phase}` : 'landing';
   elements.landingScreen.classList.toggle('hidden', inRoom);
   elements.roomScreen.classList.toggle('hidden', !inRoom);
   if (inRoom) renderRoom();
@@ -1029,16 +1236,20 @@ function render() {
     renderPublicLobby();
   }
   setConnectionState(connected);
+  if (screenKey !== renderedScreenKey) window.scrollTo(0, 0);
+  renderedScreenKey = screenKey;
 }
 
-async function createRoom(gameId = null) {
+async function createRoom(gameId = null, { buildCustom = false } = {}) {
   const response = await runAction(() => request('room:create'));
   if (!response) return;
   roomState = response.state;
+  preferredGameId = gameId || '';
   saveSession(response.session);
   shouldResumeOnConnect = true;
   resetDrafts();
-  preferredGameId = gameId || '';
+  customBuilderOpen = buildCustom;
+  customBuilderSection = 0;
   if (gameId) {
     gameFilter = '';
     hostGameListScroll = 0;
@@ -1050,17 +1261,47 @@ async function createRoom(gameId = null) {
 }
 
 async function joinRoom(form) {
+  if (mutationPending) return;
   const code = form.code.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
   const name = form.name.value.trim();
-  const response = await runAction(() => request('room:join', { code, name }));
+  clearJoinError();
+  joining = true;
+  elements.joinRoomButton.textContent = 'Joining…';
+  elements.joinRoomForm.ariaBusy = 'true';
+  setConnectionState(connected);
+  const response = await runAction(() => request('room:join', { code, name }), {
+    quiet: true,
+    onError(error) {
+      elements.joinError.textContent = error.message;
+      elements.joinError.hidden = false;
+      const input = error.code === 'ROOM_NOT_FOUND' ? elements.joinCode
+        : ['INVALID_NAME', 'NAME_TAKEN'].includes(error.code) ? elements.joinName : null;
+      if (input) {
+        input.ariaInvalid = 'true';
+        input.focus();
+      }
+    },
+  });
+  joining = false;
+  elements.joinRoomButton.textContent = 'Join room';
+  elements.joinRoomForm.ariaBusy = 'false';
+  setConnectionState(connected);
   if (!response) return;
   roomState = response.state;
+  preferredGameId = '';
   saveSession(response.session);
   shouldResumeOnConnect = true;
   localStorage.setItem(NAME_KEY, name);
   resetDrafts();
   render();
   showToast(`Joined room ${response.session.code}.`, 'success');
+}
+
+function clearJoinError() {
+  elements.joinError.hidden = true;
+  elements.joinError.textContent = '';
+  elements.joinCode.ariaInvalid = 'false';
+  elements.joinName.ariaInvalid = 'false';
 }
 
 async function leaveRoom() {
@@ -1080,7 +1321,12 @@ async function leaveRoom() {
 }
 
 elements.createRoomButton.addEventListener('click', () => void createRoom());
+elements.createCustomRoomButton.addEventListener('click', () => void createRoom(null, { buildCustom: true }));
 elements.publicGameList.addEventListener('click', (event) => {
+  if (event.target.closest('[data-catalog-retry]')) {
+    void loadCatalog();
+    return;
+  }
   const row = event.target.closest('[data-public-game-id]');
   if (!row || row.disabled) return;
   void createRoom(row.dataset.publicGameId);
@@ -1091,25 +1337,48 @@ elements.landingGameFilter.addEventListener('input', () => {
   elements.landingGameFilter.focus();
   elements.landingGameFilter.setSelectionRange(landingGameFilter.length, landingGameFilter.length);
 });
+elements.landingYearFilter.addEventListener('change', () => {
+  landingYearFilter = elements.landingYearFilter.value;
+  renderPublicLobby();
+});
 elements.joinRoomForm.addEventListener('submit', (event) => {
   event.preventDefault();
   void joinRoom(event.currentTarget.elements);
 });
 elements.joinCode.addEventListener('input', () => {
+  clearJoinError();
   elements.joinCode.value = elements.joinCode.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
 });
+elements.joinName.addEventListener('input', clearJoinError);
 elements.roomCodeButton.addEventListener('click', () => void copyInvite());
 elements.leaveRoomButton.addEventListener('click', () => void leaveRoom());
 
+function canBuzzWithKeyboard(event) {
+  const target = event.target;
+  if (target?.matches?.('input, textarea, select, button, summary, [contenteditable="true"]')) return false;
+  if (!connected || event.repeat || roomState?.phase !== 'board' || !roomState.currentClue || !roomState.you) return false;
+  const clue = roomState.currentClue;
+  if (clue.dailyDouble || !clue.buzzOpen || clue.revealed) return false;
+  if (roomState.role === 'player' && !roomState.hostConnected) return false;
+  if (clue.ineligiblePlayerIds.includes(roomState.you.id)) return false;
+  return !clue.buzzes.some((buzz) => buzz.playerId === roomState.you.id);
+}
+
+document.addEventListener('keydown', (event) => {
+  if (event.code !== 'Space' || !canBuzzWithKeyboard(event)) return;
+  event.preventDefault();
+  void runAction(() => request('player:buzz'));
+});
+
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Tab') return;
-  const overlay = elements.roomContent.querySelector('.clue-overlay');
+  const overlay = elements.roomContent.querySelector('.clue-overlay, .custom-builder-overlay');
   if (!overlay) return;
-  const focusable = [...overlay.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])')]
+  const focusable = [...overlay.querySelectorAll('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), summary, [tabindex]:not([tabindex="-1"])')]
     .filter((element) => !element.hidden && element.getClientRects().length > 0);
   if (focusable.length === 0) {
     event.preventDefault();
-    overlay.querySelector('.clue-stage')?.focus();
+    overlay.querySelector('.clue-stage, .custom-builder-dialog')?.focus();
     return;
   }
   const first = focusable[0];
@@ -1125,7 +1394,20 @@ document.addEventListener('keydown', (event) => {
 });
 
 elements.roomContent.addEventListener('input', (event) => {
-  if (event.target.id === 'game-filter') {
+  const customField = event.target.dataset?.customField;
+  if (customField) {
+    const categoryIndex = Number(event.target.dataset.categoryIndex);
+    const clueIndex = Number(event.target.dataset.clueIndex);
+    if (customField === 'title') customBoardDraft.title = event.target.value;
+    else if (customField === 'description') customBoardDraft.description = event.target.value;
+    else if (customField === 'category-name') customBoardDraft.categories[categoryIndex].name = event.target.value;
+    else if (customField === 'clue') customBoardDraft.categories[categoryIndex].clues[clueIndex].clue = event.target.value;
+    else if (customField === 'answer') customBoardDraft.categories[categoryIndex].clues[clueIndex].answer = event.target.value;
+    else if (customField === 'final-category') customBoardDraft.finalJeopardy.category = event.target.value;
+    else if (customField === 'final-clue') customBoardDraft.finalJeopardy.clue = event.target.value;
+    else if (customField === 'final-answer') customBoardDraft.finalJeopardy.answer = event.target.value;
+    else if (customField === 'daily-double') customBoardDraft.dailyDouble = event.target.value;
+  } else if (event.target.id === 'game-filter') {
     gameFilter = event.target.value;
     hostGameListScroll = 0;
     renderRoom();
@@ -1134,8 +1416,8 @@ elements.roomContent.addEventListener('input', (event) => {
     input?.setSelectionRange(gameFilter.length, gameFilter.length);
   } else if (event.target.id === 'daily-wager') {
     drafts.dailyWager = event.target.value;
-  } else if (event.target.id === 'host-player-name') {
-    hostPlayerName = event.target.value;
+  } else if (event.target.id === 'host-contestant-name') {
+    drafts.hostName = event.target.value;
   } else if (event.target.id === 'final-wager') {
     drafts.finalWager = event.target.value;
   } else if (event.target.id === 'final-response') {
@@ -1148,7 +1430,13 @@ elements.roomContent.addEventListener('scroll', (event) => {
 }, true);
 
 elements.roomContent.addEventListener('change', (event) => {
-  if (event.target.id === 'daily-player') {
+  if (event.target.id === 'game-year-filter') {
+    gameYearFilter = event.target.value;
+    hostGameListScroll = 0;
+    renderRoom();
+  } else if (event.target.dataset?.customField === 'daily-double') {
+    customBoardDraft.dailyDouble = event.target.value;
+  } else if (event.target.id === 'daily-player') {
     drafts.dailyPlayerId = event.target.value;
     const selected = playerById(drafts.dailyPlayerId);
     const max = Math.max(selected?.score || 0, 1000);
@@ -1160,18 +1448,38 @@ elements.roomContent.addEventListener('change', (event) => {
 
 elements.roomContent.addEventListener('submit', (event) => {
   event.preventDefault();
-  if (event.target.id === 'daily-wager-form') {
+  if (event.target.id === 'host-contestant-form') {
+    const name = event.target.elements.name.value.trim();
+    void runAction(async () => {
+      await request('host:join-contestants', { name });
+      localStorage.setItem(NAME_KEY, name);
+      drafts.hostName = name;
+      showToast('You joined the players. Your answers stay private.', 'success');
+    });
+  } else if (event.target.id === 'custom-game-form') {
+    void runAction(async () => {
+      const problem = customDraftProblem();
+      if (problem) {
+        customBuilderSection = problem.section;
+        renderRoom();
+        showToast(problem.message, 'error');
+        return;
+      }
+      const response = await request('host:create-custom-game', { game: customGamePayload() });
+      setPreferredGame(response.result?.gameId || '');
+      gameFilter = '';
+      gameYearFilter = 'all';
+      customBuilderOpen = false;
+      customBuilderSection = 0;
+      customBoardDraft = emptyCustomBoardDraft();
+      renderRoom();
+      showToast('Custom board saved and selected.', 'success');
+    });
+  } else if (event.target.id === 'daily-wager-form') {
     void runAction(() => request('host:set-daily-double', {
       playerId: event.target.elements.playerId.value,
       wager: Number(event.target.elements.wager.value),
     }));
-  } else if (event.target.id === 'host-player-form') {
-    const name = event.target.elements.name.value.trim();
-    void runAction(async () => {
-      await request('host:join-as-player', { name });
-      hostPlayerName = name;
-      localStorage.setItem(NAME_KEY, name);
-    });
   } else if (event.target.id === 'final-wager-form') {
     void runAction(async () => {
       await request('player:final-wager', { wager: Number(event.target.elements.wager.value) });
@@ -1193,8 +1501,52 @@ elements.roomContent.addEventListener('click', (event) => {
   const action = target.dataset.action;
   const playerId = target.dataset.playerId;
 
+  if (action === 'cancel-player-skip') {
+    const controls = target.closest('details.player-skip-controls');
+    if (controls) {
+      controls.open = false;
+      controls.querySelector('summary')?.focus();
+    }
+    return;
+  }
+
+  if (action === 'open-custom-builder') {
+    customBuilderOpen = true;
+    customBuilderSection = 0;
+    renderRoom();
+    return;
+  }
+  if (action === 'close-custom-builder') {
+    customBuilderOpen = false;
+    renderRoom();
+    return;
+  }
+  if (action === 'custom-section') {
+    customBuilderSection = Number(target.dataset.section);
+    renderRoom();
+    return;
+  }
+  if (action === 'previous-custom-section') {
+    customBuilderSection = Math.max(0, customBuilderSection - 1);
+    renderRoom();
+    return;
+  }
+  if (action === 'next-custom-section') {
+    customBuilderSection = Math.min(6, customBuilderSection + 1);
+    renderRoom();
+    return;
+  }
+  if (action === 'reset-custom-builder') {
+    if (window.confirm('Clear every field in this custom board?')) {
+      customBoardDraft = emptyCustomBoardDraft();
+      customBuilderSection = 0;
+      renderRoom();
+    }
+    return;
+  }
+
   if (action === 'select-game') {
-    preferredGameId = target.dataset.gameId;
+    setPreferredGame(target.dataset.gameId);
     hostGameListScroll = 0;
     renderRoom();
     return;
@@ -1202,23 +1554,25 @@ elements.roomContent.addEventListener('click', (event) => {
 
   const actions = {
     'copy-invite': () => copyInvite(),
+    'leave-contestants': () => request('host:leave-contestants'),
     'start-game': () => request('host:start-game', { gameId: target.dataset.gameId }),
-    'host-leave-player': () => request('host:leave-as-player'),
-    'open-host-key': () => request('host:open-answer-key'),
     'remove-player': async () => {
       const player = playerById(playerId);
       if (player && window.confirm(`Remove ${player.name} from the room?`)) {
         await request('host:remove-player', { playerId });
       }
     },
-    'open-clue': () => request('host:open-clue', {
+    'open-clue': () => request(roomState.role === 'host' ? 'host:open-clue' : 'player:open-clue', {
       categoryIndex: Number(target.dataset.categoryIndex),
       clueIndex: Number(target.dataset.clueIndex),
     }),
     'reveal-answer': () => request('host:reveal-answer'),
     'reset-buzzers': () => request('host:reset-buzzers'),
     'skip-clue': () => request('host:skip-clue'),
-    'score-clue': () => request('host:score-clue', { playerId, correct: target.dataset.correct === 'true' }),
+    'player-skip-clue': () => request('player:skip-clue', { clueKey: target.dataset.clueKey }),
+    'cancel-clue': () => request('host:cancel-clue'),
+    'open-player-answer': () => request('player:open-answer', { clueKey: roomState.currentClue?.clueKey }),
+    'self-score-clue': () => request('player:self-score-clue', { clueKey: roomState.currentClue?.clueKey, correct: target.dataset.correct === 'true' }),
     'adjust-score': () => request('host:adjust-score', { playerId, delta: Number(target.dataset.delta) }),
     'buzz': () => request('player:buzz'),
     'reset-game': async () => {
@@ -1234,16 +1588,37 @@ elements.roomContent.addEventListener('click', (event) => {
         returned = true;
       }
       if (returned) {
-        preferredGameId = '';
+        setPreferredGame('');
         gameFilter = '';
+        gameYearFilter = 'all';
         hostGameListScroll = 0;
+        customBuilderOpen = false;
         renderRoom();
       }
     },
     'start-final': () => request('host:start-final'),
-    'advance-final': () => request('host:advance-final', { phase: roomState.final?.phase }),
-    'score-final': () => request('host:score-final', { playerId, correct: target.dataset.correct === 'true' }),
-    'finish-final': () => request('host:finish-final'),
+    'advance-final': async () => {
+      const final = roomState.final;
+      if (!final) return;
+      const awaitingWagers = final.phase === 'wager';
+      const pending = final.submissions.filter((submission) => (
+        awaitingWagers ? !submission.wagerSubmitted : !submission.responseSubmitted
+      )).length;
+      if (pending) {
+        const consequence = awaitingWagers
+          ? `Continue without ${pending} wager${pending === 1 ? '' : 's'}? Missing wagers will be set to $0.`
+          : `Reveal the answer without ${pending} response${pending === 1 ? '' : 's'}? Missing responses will be marked incorrect and their wagers deducted.`;
+        if (!window.confirm(consequence)) return;
+      }
+      await request('host:advance-final', { phase: final.phase, force: pending > 0 });
+    },
+    'self-score-final': () => request('player:self-score-final', { correct: target.dataset.correct === 'true' }),
+    'finish-final': async () => {
+      const pending = roomState.final?.submissions.filter((submission) => !submission.scored).length || 0;
+      if (!pending || window.confirm(`Finish Final Jeopardy and mark ${pending} pending response${pending === 1 ? '' : 's'} incorrect?`)) {
+        await request('host:finish-final');
+      }
+    },
   };
 
   if (actions[action]) void runAction(actions[action]);
@@ -1260,14 +1635,6 @@ socket.on('disconnect', () => {
 });
 
 socket.on('room:state', (state) => {
-  const activeInputId = document.activeElement?.id;
-  const finalSubmissionAccepted = (activeInputId === 'final-wager' && state.final?.yourWagerSubmitted)
-    || (activeInputId === 'final-response' && state.final?.yourResponseSubmitted);
-  const preserveActiveDraft = ['daily-wager', 'final-wager', 'final-response'].includes(activeInputId)
-    && !finalSubmissionAccepted
-    && roomState?.phase === state.phase
-    && roomState?.final?.phase === state.final?.phase
-    && roomState?.currentClue?.phase === state.currentClue?.phase;
   const priorClue = roomState?.currentClue;
   const priorPhase = roomState?.phase;
   const priorGameId = roomState?.game?.id;
@@ -1280,7 +1647,7 @@ socket.on('room:state', (state) => {
     drafts.finalWager = '';
     drafts.finalResponse = '';
   }
-  if (!preserveActiveDraft) render();
+  render();
 });
 
 socket.on('room:error', ({ message }) => showToast(message, 'error'));
@@ -1318,18 +1685,18 @@ async function boot() {
     shouldResumeOnConnect = false;
     showToast(`Invite ${inviteCode} opened. Your saved ${session.code} session was left untouched.`, 'info');
   }
-  const [networkResult, gamesResult] = await Promise.allSettled([
-    fetch('/api/network').then((response) => response.json()),
-    fetch('/api/games').then((response) => response.json()),
-  ]);
-  if (networkResult.status === 'fulfilled' && Array.isArray(networkResult.value.urls) && networkResult.value.urls.length) {
-    networkUrls = networkResult.value.urls;
-  }
-  if (gamesResult.status === 'fulfilled' && Array.isArray(gamesResult.value)) {
-    publicGameCatalog = gamesResult.value;
-  }
   render();
   socket.connect();
+  void loadCatalog();
+  try {
+    const response = await fetch('/api/network', { signal: AbortSignal.timeout(5000) });
+    if (!response.ok) return;
+    const network = await response.json();
+    if (Array.isArray(network.urls) && network.urls.length) networkUrls = network.urls;
+    render();
+  } catch {
+    // Invites still work with the current origin when network discovery fails.
+  }
 }
 
 void boot();

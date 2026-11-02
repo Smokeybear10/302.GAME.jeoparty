@@ -25,6 +25,78 @@ function locateClue(game, predicate) {
   throw new Error('Matching clue not found');
 }
 
+function customGameInput(game) {
+  return {
+    title: 'Thomas Custom Board',
+    description: 'Made in the room editor',
+    categories: game.categories.map((category) => ({
+      name: category.name,
+      clues: category.clues.map((clue) => ({
+        clue: clue.clue,
+        answer: clue.answer,
+        dailyDouble: clue.dailyDouble === true,
+      })),
+    })),
+    finalJeopardy: { ...game.finalJeopardy },
+  };
+}
+
+for (const departure of ['leave', 'remove']) {
+  test(`buzzing reopens when the promoted responder ${departure}s before checking their answer`, () => {
+    const { catalog, games, host, manager, second } = setupRoom();
+    const third = manager.joinRoom('player-3', { code: host.code, name: 'Jordan' });
+    manager.startGame('host-1', games[0].id);
+    manager.openClue('host-1', locateClue(games[0], (clue) => !clue.dailyDouble));
+    manager.buzz('player-1');
+    manager.buzz('player-2');
+    const clueKey = manager.stateFor('player-1', catalog).currentClue.clueKey;
+    manager.openPlayerAnswer('player-1', { clueKey });
+    manager.selfScoreClue('player-1', { clueKey, correct: false });
+    assert.equal(manager.stateFor('player-2', catalog).currentClue.responderPlayerId, second.playerId);
+
+    if (departure === 'leave') manager.leaveRoom('player-2');
+    else manager.removePlayer('host-1', second.playerId);
+
+    assert.equal(manager.stateFor('player-3', catalog).currentClue.buzzOpen, true);
+    manager.buzz('player-3');
+    assert.equal(manager.stateFor('player-3', catalog).currentClue.responderPlayerId, third.playerId);
+  });
+}
+
+test('host can create, select, and play a room-scoped custom board', () => {
+  const { catalog, games, manager } = setupRoom();
+  const created = manager.createCustomGame('host-1', customGameInput(games[0]));
+
+  assert.match(created.gameId, /^custom-/);
+  const hostLobby = manager.stateFor('host-1', catalog);
+  assert.equal(hostLobby.gameCatalog[0].id, created.gameId);
+  assert.equal(hostLobby.gameCatalog[0].title, 'Thomas Custom Board');
+  assert.equal(hostLobby.gameCatalog[0].source, 'custom');
+  assert.equal(hostLobby.gameCatalog[0].year, null);
+  assert.equal(Object.hasOwn(manager.stateFor('player-1', catalog), 'gameCatalog'), false);
+
+  manager.startGame('host-1', created.gameId);
+  const board = manager.stateFor('host-1', catalog).game;
+  assert.equal(board.id, created.gameId);
+  assert.equal(board.title, 'Thomas Custom Board');
+  assert.equal(board.categories.length, 6);
+});
+
+test('custom boards are validated and remain host-only', () => {
+  const { games, manager } = setupRoom();
+  const incomplete = customGameInput(games[0]);
+  incomplete.finalJeopardy.answer = '';
+
+  assert.throws(
+    () => manager.createCustomGame('host-1', incomplete),
+    (error) => error instanceof RoomError && error.code === 'INVALID_CUSTOM_GAME',
+  );
+  assert.throws(
+    () => manager.createCustomGame('player-1', customGameInput(games[0])),
+    (error) => error instanceof RoomError && error.code === 'HOST_ONLY',
+  );
+});
+
 test('creates rooms, enforces unique names, and resumes disconnected sessions', () => {
   const { catalog, first, host, manager } = setupRoom();
 
@@ -56,58 +128,26 @@ test('an active session takeover ejects the previous socket without risking lost
   assert.equal(retried.token, first.token);
 });
 
-test('host can join the roster, keep host privileges, and participate in authoritative buzz order', () => {
+test('host stays a dedicated controller while remote contestants own the buzzer and answer check', () => {
   const { catalog, first, games, manager, second } = setupRoom();
-  manager.joinHostAsPlayer('host-1', { name: 'Alex' });
-
-  let hostState = manager.stateFor('host-1', catalog);
-  const hostPlayerId = hostState.you.id;
-  assert.equal(hostState.role, 'host');
-  assert.equal(hostState.you.name, 'Alex');
-  assert.equal(hostState.you.isHost, true);
-  assert.equal(hostState.players.find((player) => player.id === hostPlayerId).isHost, true);
-  assert.equal(hostState.players.filter((player) => player.isHost).length, 1);
-
-  manager.joinHostAsPlayer('host-1', { name: 'Alexis' });
-  hostState = manager.stateFor('host-1', catalog);
-  assert.equal(hostState.players.length, 3);
-  assert.equal(hostState.you.id, hostPlayerId);
-  assert.equal(hostState.you.name, 'Alexis');
-  assert.throws(
-    () => manager.joinRoom('duplicate-name', { code: hostState.code, name: 'alexis' }),
-    (error) => error.code === 'NAME_TAKEN',
-  );
-
   const location = locateClue(games[0], (clue) => !clue.dailyDouble);
   manager.startGame('host-1', games[0].id);
   manager.openClue('host-1', location);
   manager.buzz('player-2');
-  manager.buzz('host-1');
   manager.buzz('player-1');
+  assert.throws(() => manager.buzz('host-1'), (error) => error.code === 'CONTESTANT_ONLY');
   assert.deepEqual(
     manager.stateFor('host-1', catalog).currentClue.buzzes.map((buzz) => buzz.playerId),
-    [second.playerId, hostPlayerId, first.playerId],
-  );
-
-  manager.openAnswerKey('host-1');
-  hostState = manager.stateFor('host-1', catalog);
-  assert.equal(hostState.currentClue.hostKeyOutcome, 'forfeited');
-  assert.equal(hostState.currentClue.expectedAnswer, location.clue.answer);
-  assert.equal(hostState.currentClue.ineligiblePlayerIds.includes(hostPlayerId), true);
-  assert.deepEqual(
-    hostState.currentClue.buzzes.map((buzz) => buzz.playerId),
     [second.playerId, first.playerId],
   );
-  assert.equal(Object.hasOwn(manager.stateFor('player-1', catalog).currentClue, 'expectedAnswer'), false);
-  assert.throws(() => manager.buzz('host-1'), (error) => error.code === 'ALREADY_RULED');
-  manager.scoreClue('host-1', { playerId: second.playerId, correct: false });
-  hostState = manager.stateFor('host-1', catalog);
-  assert.deepEqual(hostState.currentClue.buzzes.map((buzz) => buzz.playerId), [first.playerId]);
-  assert.equal(hostState.currentClue.ineligiblePlayerIds.includes(hostPlayerId), true);
-  manager.scoreClue('host-1', { playerId: first.playerId, correct: true });
-  hostState = manager.stateFor('host-1', catalog);
-  assert.equal(hostState.you.score, 0);
-  assert.equal(hostState.players.find((player) => player.id === first.playerId).score, location.clue.value);
+  const clueKey = manager.stateFor('player-2', catalog).currentClue.clueKey;
+  assert.throws(
+    () => manager.openPlayerAnswer('host-1', { clueKey }),
+    (error) => error.code === 'CONTESTANT_ONLY',
+  );
+  manager.openPlayerAnswer('player-2', { clueKey });
+  assert.equal(Object.hasOwn(manager.stateFor('host-1', catalog).currentClue, 'privateAnswer'), false);
+  assert.equal(manager.stateFor('player-2', catalog).currentClue.privateAnswer, location.clue.answer);
 });
 
 test('host contestant membership is lobby-only, counts toward the cap, and cannot be generically removed', () => {
@@ -144,7 +184,7 @@ test('host contestant membership is lobby-only, counts toward the cap, and canno
   );
 });
 
-test('host contestant identity survives disconnect and resume without losing its score', () => {
+test('host reconnect never receives a contestant private answer', () => {
   const { catalog, games, host, manager } = setupRoom();
   manager.joinHostAsPlayer('host-1', { name: 'Alex' });
   const beforeDisconnect = manager.stateFor('host-1', catalog).you;
@@ -152,7 +192,9 @@ test('host contestant identity survives disconnect and resume without losing its
   manager.adjustScore('host-1', { playerId: beforeDisconnect.id, delta: 600 });
   const location = locateClue(games[0], (clue) => !clue.dailyDouble);
   manager.openClue('host-1', location);
-  manager.openAnswerKey('host-1');
+  manager.buzz('player-1');
+  const clueKey = manager.stateFor('player-1', catalog).currentClue.clueKey;
+  manager.openPlayerAnswer('player-1', { clueKey });
   manager.disconnect('host-1');
 
   const disconnectedHost = manager.stateFor('player-1', catalog).players.find((player) => player.id === beforeDisconnect.id);
@@ -165,10 +207,9 @@ test('host contestant identity survives disconnect and resume without losing its
   assert.equal(resumedState.you.id, beforeDisconnect.id);
   assert.equal(resumedState.you.connected, true);
   assert.equal(resumedState.you.score, 600);
-  assert.equal(resumedState.currentClue.hostKeyOpened, true);
-  assert.equal(resumedState.currentClue.hostKeyOutcome, 'forfeited');
-  assert.equal(resumedState.currentClue.expectedAnswer, location.clue.answer);
-  assert.equal(resumedState.currentClue.ineligiblePlayerIds.includes(beforeDisconnect.id), true);
+  assert.equal(resumedState.currentClue.selfJudgePlayerId, manager.stateFor('player-1', catalog).you.id);
+  assert.equal(Object.hasOwn(resumedState.currentClue, 'answer'), false);
+  assert.equal(Object.hasOwn(resumedState.currentClue, 'privateAnswer'), false);
 
   const takeover = manager.resumeRoom('host-takeover', { code: host.code, token: host.token });
   assert.equal(takeover.replacedSocketId, 'host-resumed');
@@ -179,31 +220,20 @@ test('host contestant identity survives disconnect and resume without losing its
   assert.equal(takeoverState.players.filter((player) => player.isHost).length, 1);
 });
 
-test('keeps answers private, orders buzzes, and reopens after an incorrect response', () => {
+test('only the active contestant sees the answer and self-scoring promotes the buzz queue', () => {
   const { catalog, first, games, manager, second } = setupRoom();
   const game = games[0];
   const location = locateClue(game, (clue) => !clue.dailyDouble);
   manager.startGame('host-1', game.id);
   manager.openClue('host-1', location);
 
-  let hostState = manager.stateFor('host-1', catalog);
+  const hostState = manager.stateFor('host-1', catalog);
   const playerState = manager.stateFor('player-1', catalog);
-  assert.equal(hostState.currentClue.answer, null);
-  assert.equal(hostState.currentClue.hostKeyAvailable, true);
-  assert.equal(hostState.currentClue.hostKeyOpened, false);
-  assert.equal(hostState.currentClue.hostKeyOutcome, null);
-  assert.equal(Object.hasOwn(hostState.currentClue, 'expectedAnswer'), false);
-  assert.equal(playerState.currentClue.answer, null);
-  assert.equal(Object.hasOwn(playerState.currentClue, 'expectedAnswer'), false);
+  assert.equal(Object.hasOwn(hostState.currentClue, 'answer'), false);
+  assert.equal(Object.hasOwn(hostState.currentClue, 'privateAnswer'), false);
+  assert.equal(Object.hasOwn(playerState.currentClue, 'answer'), false);
+  assert.equal(Object.hasOwn(playerState.currentClue, 'privateAnswer'), false);
   assert.equal(JSON.stringify(playerState.game).includes(location.clue.clue), false);
-
-  manager.openAnswerKey('host-1');
-  hostState = manager.stateFor('host-1', catalog);
-  assert.equal(hostState.currentClue.expectedAnswer, location.clue.answer);
-  assert.equal(hostState.currentClue.hostKeyAvailable, false);
-  assert.equal(hostState.currentClue.hostKeyOpened, true);
-  assert.equal(hostState.currentClue.hostKeyOutcome, 'moderator');
-  assert.equal(Object.hasOwn(manager.stateFor('player-1', catalog).currentClue, 'expectedAnswer'), false);
 
   manager.buzz('player-2');
   manager.buzz('player-1');
@@ -211,134 +241,116 @@ test('keeps answers private, orders buzzes, and reopens after an incorrect respo
     manager.stateFor('host-1', catalog).currentClue.buzzes.map((buzz) => buzz.playerId),
     [second.playerId, first.playerId],
   );
+  const clueKey = manager.stateFor('player-2', catalog).currentClue.clueKey;
+  assert.throws(
+    () => manager.openPlayerAnswer('player-1', { clueKey }),
+    (error) => error.code === 'NOT_RESPONDER',
+  );
+  assert.throws(
+    () => manager.selfScoreClue('player-2', { clueKey, correct: true }),
+    (error) => error.code === 'ANSWER_NOT_OPEN',
+  );
+  manager.openPlayerAnswer('player-2', { clueKey });
+  const activeState = manager.stateFor('player-2', catalog);
+  assert.equal(activeState.currentClue.privateAnswer, location.clue.answer);
+  assert.equal(activeState.currentClue.canSelfScore, true);
+  assert.equal(Object.hasOwn(manager.stateFor('host-1', catalog).currentClue, 'privateAnswer'), false);
+  assert.equal(Object.hasOwn(manager.stateFor('player-1', catalog).currentClue, 'privateAnswer'), false);
+  assert.throws(() => manager.resetBuzzers('host-1'), (error) => error.code === 'RESPONSE_IN_REVIEW');
+  assert.throws(() => manager.revealAnswer('host-1'), (error) => error.code === 'RESPONDER_ACTIVE');
+  assert.throws(
+    () => manager.selfScoreClue('player-2', { clueKey, correct: 'yes' }),
+    (error) => error.code === 'INVALID_JUDGMENT',
+  );
 
-  manager.scoreClue('host-1', { playerId: second.playerId, correct: false });
+  manager.selfScoreClue('player-2', { clueKey, correct: false });
   const afterMiss = manager.stateFor('host-1', catalog);
   assert.equal(afterMiss.players.find((player) => player.id === second.playerId).score, -location.clue.value);
-  assert.equal(afterMiss.currentClue.buzzOpen, true);
+  assert.equal(afterMiss.currentClue.buzzOpen, false);
+  assert.equal(afterMiss.currentClue.responderPlayerId, first.playerId);
+  assert.equal(afterMiss.currentClue.selfJudgePlayerId, null);
   assert.deepEqual(afterMiss.currentClue.buzzes.map((buzz) => buzz.playerId), [first.playerId]);
-  assert.throws(
-    () => manager.buzz('player-2'),
-    (error) => error.code === 'ALREADY_RULED',
-  );
-  assert.throws(
-    () => manager.scoreClue('host-1', { playerId: second.playerId, correct: false }),
-    (error) => error.code === 'ALREADY_RULED',
-  );
-
-  manager.scoreClue('host-1', { playerId: first.playerId, correct: true });
+  manager.openPlayerAnswer('player-1', { clueKey });
+  manager.selfScoreClue('player-1', { clueKey, correct: true });
   const completeState = manager.stateFor('host-1', catalog);
   assert.equal(completeState.currentClue, null);
   assert.equal(completeState.players.find((player) => player.id === first.playerId).score, location.clue.value);
   assert.equal(completeState.game.categories[location.categoryIndex].clues[location.clueIndex].answered, true);
 });
 
-test('first-buzz dual-role host commits before opening the private answer key', () => {
-  const { catalog, games, host, manager } = setupRoom();
-  manager.joinHostAsPlayer('host-1', { name: 'Alex' });
-  const hostPlayerId = manager.stateFor('host-1', catalog).you.id;
+test('a private answer survives contestant reconnect and rejects stale clue actions', () => {
+  const { catalog, first, games, manager } = setupRoom();
   const location = locateClue(games[0], (clue) => !clue.dailyDouble);
   manager.startGame('host-1', games[0].id);
   manager.openClue('host-1', location);
-
-  for (const socketId of ['host-1', 'player-1', 'player-2']) {
-    const clue = manager.stateFor(socketId, catalog).currentClue;
-    assert.equal(clue.answer, null);
-    assert.equal(Object.hasOwn(clue, 'expectedAnswer'), false);
-  }
-
-  manager.buzz('host-1');
-  assert.throws(
-    () => manager.scoreClue('host-1', { playerId: hostPlayerId, correct: true }),
-    (error) => error.code === 'HOST_ATTEMPT_NOT_COMMITTED',
-  );
-  manager.openAnswerKey('host-1');
-  let hostClue = manager.stateFor('host-1', catalog).currentClue;
-  assert.equal(hostClue.hostKeyOpened, true);
-  assert.equal(hostClue.hostKeyOutcome, 'committed');
-  assert.equal(hostClue.expectedAnswer, location.clue.answer);
-  assert.equal(hostClue.buzzes[0].playerId, hostPlayerId);
-  assert.throws(() => manager.resetBuzzers('host-1'), (error) => error.code === 'HOST_ATTEMPT_LOCKED');
-  assert.equal(Object.hasOwn(manager.stateFor('player-1', catalog).currentClue, 'expectedAnswer'), false);
-
-  manager.disconnect('host-1');
-  manager.resumeRoom('host-reconnected', { code: host.code, token: host.token });
-  hostClue = manager.stateFor('host-reconnected', catalog).currentClue;
-  assert.equal(hostClue.hostKeyOpened, true);
-  assert.equal(hostClue.hostKeyOutcome, 'committed');
-  assert.equal(hostClue.expectedAnswer, location.clue.answer);
-  assert.equal(hostClue.buzzes[0].playerId, hostPlayerId);
-
-  manager.resumeRoom('host-takeover', { code: host.code, token: host.token });
-  hostClue = manager.stateFor('host-takeover', catalog).currentClue;
-  assert.equal(hostClue.hostKeyOutcome, 'committed');
-  assert.equal(hostClue.buzzes[0].playerId, hostPlayerId);
-  manager.scoreClue('host-takeover', { playerId: hostPlayerId, correct: true });
-  assert.equal(manager.stateFor('host-takeover', catalog).you.score, location.clue.value);
-});
-
-test('unopened answer key remains private across host reconnect', () => {
-  const { catalog, games, host, manager } = setupRoom();
-  manager.joinHostAsPlayer('host-1', { name: 'Alex' });
-  const location = locateClue(games[0], (clue) => !clue.dailyDouble);
-  manager.startGame('host-1', games[0].id);
-  manager.openClue('host-1', location);
-  manager.disconnect('host-1');
-  manager.resumeRoom('host-reconnected', { code: host.code, token: host.token });
-
-  const clue = manager.stateFor('host-reconnected', catalog).currentClue;
-  assert.equal(clue.hostKeyAvailable, true);
-  assert.equal(clue.hostKeyOpened, false);
-  assert.equal(clue.hostKeyOutcome, null);
-  assert.equal(Object.hasOwn(clue, 'expectedAnswer'), false);
-});
-
-test('unbuzzed dual-role host forfeits the clue before opening the private answer key', () => {
-  const { catalog, games, manager } = setupRoom();
-  manager.joinHostAsPlayer('host-1', { name: 'Alex' });
-  const hostPlayerId = manager.stateFor('host-1', catalog).you.id;
-  const location = locateClue(games[0], (clue) => !clue.dailyDouble);
-  manager.startGame('host-1', games[0].id);
-  manager.openClue('host-1', location);
-
-  manager.openAnswerKey('host-1');
-  let clue = manager.stateFor('host-1', catalog).currentClue;
-  assert.equal(clue.hostKeyOutcome, 'forfeited');
-  assert.equal(clue.ineligiblePlayerIds.includes(hostPlayerId), true);
-  assert.throws(() => manager.buzz('host-1'), (error) => error.code === 'ALREADY_RULED');
-  manager.resetBuzzers('host-1');
-  assert.throws(() => manager.buzz('host-1'), (error) => error.code === 'ALREADY_RULED');
-
   manager.buzz('player-1');
-  manager.scoreClue('host-1', { playerId: manager.stateFor('player-1', catalog).you.id, correct: true });
-  const nextLocation = locateClue(games[0], (candidate) => !candidate.dailyDouble && candidate !== location.clue);
-  manager.openClue('host-1', nextLocation);
-  clue = manager.stateFor('host-1', catalog).currentClue;
-  assert.equal(clue.hostKeyAvailable, true);
-  assert.equal(clue.hostKeyOpened, false);
-  assert.equal(clue.hostKeyOutcome, null);
-  assert.equal(clue.ineligiblePlayerIds.includes(hostPlayerId), false);
-  assert.equal(Object.hasOwn(clue, 'expectedAnswer'), false);
-  manager.buzz('host-1');
-  assert.equal(manager.stateFor('host-1', catalog).currentClue.buzzes[0].playerId, hostPlayerId);
+  const clueKey = manager.stateFor('player-1', catalog).currentClue.clueKey;
+  assert.throws(
+    () => manager.openPlayerAnswer('player-1', { clueKey: 'stale:key' }),
+    (error) => error.code === 'STALE_CLUE',
+  );
+  manager.openPlayerAnswer('player-1', { clueKey });
+  manager.disconnect('player-1');
+  assert.equal(Object.hasOwn(manager.stateFor('host-1', catalog).currentClue, 'privateAnswer'), false);
+
+  manager.resumeRoom('player-reconnected', { code: manager.stateFor('host-1', catalog).code, token: first.token });
+  const resumed = manager.stateFor('player-reconnected', catalog);
+  assert.equal(resumed.currentClue.privateAnswer, location.clue.answer);
+  assert.equal(resumed.currentClue.canSelfScore, true);
+  manager.selfScoreClue('player-reconnected', { clueKey, correct: true });
+  assert.equal(manager.stateFor('host-1', catalog).players.find((player) => player.id === first.playerId).score, location.clue.value);
 });
 
-test('public reveal resets private key disclosure state', () => {
+test('host can reset a queued buzzer before any private answer is opened', () => {
   const { catalog, games, manager } = setupRoom();
   const location = locateClue(games[0], (clue) => !clue.dailyDouble);
   manager.startGame('host-1', games[0].id);
   manager.openClue('host-1', location);
-  manager.openAnswerKey('host-1');
-  assert.equal(manager.stateFor('host-1', catalog).currentClue.hostKeyOpened, true);
+  manager.buzz('player-1');
+  manager.buzz('player-2');
+  manager.resetBuzzers('host-1');
 
+  const clue = manager.stateFor('host-1', catalog).currentClue;
+  assert.deepEqual(clue.buzzes, []);
+  assert.equal(clue.responderPlayerId, null);
+  assert.equal(clue.buzzOpen, true);
+  manager.buzz('player-2');
+  assert.equal(manager.stateFor('host-1', catalog).currentClue.buzzes[0].name, 'Theo');
+});
+
+test('leaving during a private check safely promotes the next queued contestant', () => {
+  const { catalog, first, games, manager, second } = setupRoom();
+  const location = locateClue(games[0], (clue) => !clue.dailyDouble);
+  manager.startGame('host-1', games[0].id);
+  manager.openClue('host-1', location);
+  manager.buzz('player-1');
+  manager.buzz('player-2');
+  const clueKey = manager.stateFor('player-1', catalog).currentClue.clueKey;
+  manager.openPlayerAnswer('player-1', { clueKey });
+  manager.leaveRoom('player-1');
+
+  const clue = manager.stateFor('host-1', catalog).currentClue;
+  assert.equal(clue.responderPlayerId, second.playerId);
+  assert.equal(clue.selfJudgePlayerId, null);
+  assert.equal(clue.buzzOpen, false);
+  assert.equal(clue.buzzes.some((buzz) => buzz.playerId === first.playerId), false);
+  manager.openPlayerAnswer('player-2', { clueKey });
+  manager.selfScoreClue('player-2', { clueKey, correct: true });
+  assert.equal(manager.stateFor('host-1', catalog).players[0].score, location.clue.value);
+});
+
+test('host can show an unclaimed answer to players without receiving it', () => {
+  const { catalog, games, manager } = setupRoom();
+  const location = locateClue(games[0], (clue) => !clue.dailyDouble);
+  manager.startGame('host-1', games[0].id);
+  manager.openClue('host-1', location);
   manager.revealAnswer('host-1');
   const hostClue = manager.stateFor('host-1', catalog).currentClue;
-  assert.equal(hostClue.answer, location.clue.answer);
-  assert.equal(hostClue.hostKeyAvailable, false);
-  assert.equal(hostClue.hostKeyOpened, false);
-  assert.equal(hostClue.hostKeyOutcome, null);
-  assert.equal(Object.hasOwn(hostClue, 'expectedAnswer'), false);
+  assert.equal(hostClue.revealed, true);
+  assert.equal(Object.hasOwn(hostClue, 'answer'), false);
+  assert.equal(Object.hasOwn(hostClue, 'privateAnswer'), false);
   assert.equal(manager.stateFor('player-1', catalog).currentClue.answer, location.clue.answer);
+  assert.equal(Object.hasOwn(manager.stateFor('player-1', catalog).currentClue, 'privateAnswer'), false);
 });
 
 test('authoritative buzz handling pauses while the host is disconnected', () => {
@@ -356,7 +368,7 @@ test('authoritative buzz handling pauses while the host is disconnected', () => 
   assert.equal(manager.stateFor('host-2', catalog).currentClue.buzzes[0].playerId, first.playerId);
 });
 
-test('runs a Daily Double with host-controlled contestant and wager', () => {
+test('Daily Double answer stays private to its selected contestant, who self-scores', () => {
   const { catalog, first, games, manager } = setupRoom();
   const game = games[0];
   const location = locateClue(game, (clue) => clue.dailyDouble);
@@ -364,8 +376,7 @@ test('runs a Daily Double with host-controlled contestant and wager', () => {
   manager.openClue('host-1', location);
   assert.equal(manager.stateFor('player-1', catalog).currentClue.phase, 'daily-wager');
   assert.equal(manager.stateFor('player-1', catalog).currentClue.question, null);
-  assert.equal(manager.stateFor('host-1', catalog).currentClue.hostKeyAvailable, false);
-  assert.throws(() => manager.openAnswerKey('host-1'), (error) => error.code === 'NO_ACTIVE_CLUE');
+  assert.equal(Object.hasOwn(manager.stateFor('host-1', catalog).currentClue, 'answer'), false);
 
   assert.throws(
     () => manager.setDailyDouble('host-1', { playerId: first.playerId, wager: 1001 }),
@@ -377,99 +388,130 @@ test('runs a Daily Double with host-controlled contestant and wager', () => {
   assert.equal(questionState.currentClue.dailyPlayerId, first.playerId);
   assert.equal(questionState.currentClue.value, 600);
   assert.throws(() => manager.buzz('player-1'), (error) => error.code === 'BUZZ_CLOSED');
-
-  manager.openAnswerKey('host-1');
-  const hostQuestionState = manager.stateFor('host-1', catalog);
-  assert.equal(hostQuestionState.currentClue.hostKeyOutcome, 'moderator');
-  assert.equal(hostQuestionState.currentClue.expectedAnswer, location.clue.answer);
-
-  manager.scoreClue('host-1', { playerId: first.playerId, correct: false });
+  const clueKey = questionState.currentClue.clueKey;
+  assert.throws(
+    () => manager.openPlayerAnswer('player-2', { clueKey }),
+    (error) => error.code === 'NOT_RESPONDER',
+  );
+  manager.openPlayerAnswer('player-1', { clueKey });
+  assert.equal(manager.stateFor('player-1', catalog).currentClue.privateAnswer, location.clue.answer);
+  assert.equal(Object.hasOwn(manager.stateFor('host-1', catalog).currentClue, 'privateAnswer'), false);
+  manager.selfScoreClue('player-1', { clueKey, correct: false });
   assert.equal(manager.stateFor('host-1', catalog).players.find((player) => player.id === first.playerId).score, -600);
   assert.equal(manager.stateFor('host-1', catalog).currentClue, null);
 });
 
-test('host contestant can be selected for and scored on a Daily Double', () => {
+test('an uncommitted Daily Double can return to the board without consuming its tile', () => {
   const { catalog, games, manager } = setupRoom();
-  manager.joinHostAsPlayer('host-1', { name: 'Alex' });
-  const hostPlayerId = manager.stateFor('host-1', catalog).you.id;
   const location = locateClue(games[0], (clue) => clue.dailyDouble);
   manager.startGame('host-1', games[0].id);
   manager.openClue('host-1', location);
 
-  assert.throws(
-    () => manager.setDailyDouble('host-1', { playerId: hostPlayerId, wager: 1001 }),
-    (error) => error.code === 'INVALID_WAGER',
-  );
-  manager.setDailyDouble('host-1', { playerId: hostPlayerId, wager: 1000 });
-  assert.equal(manager.stateFor('host-1', catalog).currentClue.dailyPlayerId, hostPlayerId);
-  assert.throws(() => manager.buzz('host-1'), (error) => error.code === 'BUZZ_CLOSED');
-  assert.throws(
-    () => manager.scoreClue('host-1', { playerId: hostPlayerId, correct: true }),
-    (error) => error.code === 'HOST_ATTEMPT_NOT_COMMITTED',
-  );
-  manager.openAnswerKey('host-1');
-  const hostClue = manager.stateFor('host-1', catalog).currentClue;
-  assert.equal(hostClue.hostKeyOutcome, 'committed');
-  assert.equal(hostClue.expectedAnswer, location.clue.answer);
-  assert.equal(Object.hasOwn(manager.stateFor('player-1', catalog).currentClue, 'expectedAnswer'), false);
-  manager.scoreClue('host-1', { playerId: hostPlayerId, correct: true });
-  assert.equal(manager.stateFor('host-1', catalog).you.score, 1000);
+  manager.cancelClue('host-1');
+  let hostState = manager.stateFor('host-1', catalog);
+  assert.equal(hostState.currentClue, null);
+  assert.equal(hostState.game.categories[location.categoryIndex].clues[location.clueIndex].answered, false);
+
+  manager.openClue('host-1', location);
+  hostState = manager.stateFor('host-1', catalog);
+  assert.equal(hostState.currentClue.dailyDouble, true);
+  assert.equal(hostState.currentClue.phase, 'daily-wager');
 });
 
-test('dual-role host moderates a remote Daily Double without changing roster eligibility', () => {
+test('Daily Double cancellation is host-only and closes after the wager is committed', () => {
+  const { first, games, manager } = setupRoom();
+  const dailyLocation = locateClue(games[0], (clue) => clue.dailyDouble);
+  const regularLocation = locateClue(games[0], (clue) => !clue.dailyDouble);
+  manager.startGame('host-1', games[0].id);
+
+  manager.openClue('host-1', dailyLocation);
+  assert.throws(
+    () => manager.cancelClue('player-1'),
+    (error) => error instanceof RoomError && error.code === 'HOST_ONLY',
+  );
+  manager.setDailyDouble('host-1', { playerId: first.playerId, wager: 400 });
+  assert.throws(
+    () => manager.cancelClue('host-1'),
+    (error) => error instanceof RoomError && error.code === 'CANCEL_NOT_ALLOWED',
+  );
+
+  manager.skipClue('host-1');
+  manager.openClue('host-1', regularLocation);
+  assert.throws(
+    () => manager.cancelClue('host-1'),
+    (error) => error instanceof RoomError && error.code === 'CANCEL_NOT_ALLOWED',
+  );
+});
+
+test('Daily Doubles in hosted mode require a connected contestant', () => {
   const { catalog, first, games, manager, second } = setupRoom();
-  manager.joinHostAsPlayer('host-1', { name: 'Alex' });
-  const hostPlayerId = manager.stateFor('host-1', catalog).you.id;
+  const location = locateClue(games[0], (clue) => clue.dailyDouble);
+  manager.startGame('host-1', games[0].id);
+  manager.openClue('host-1', location);
+
+  manager.disconnect('player-1');
+  assert.throws(
+    () => manager.setDailyDouble('host-1', { playerId: first.playerId, wager: 400 }),
+    (error) => error.code === 'PLAYER_OFFLINE',
+  );
+  manager.setDailyDouble('host-1', { playerId: second.playerId, wager: 400 });
+  const clueKey = manager.stateFor('player-2', catalog).currentClue.clueKey;
+  manager.openPlayerAnswer('player-2', { clueKey });
+  manager.selfScoreClue('player-2', { clueKey, correct: true });
+  assert.equal(manager.stateFor('host-1', catalog).players.find((player) => player.id === second.playerId).score, 400);
+});
+
+test('Daily Double wager reopens when its contestant leaves before checking', () => {
+  const { catalog, first, games, manager, second } = setupRoom();
   const location = locateClue(games[0], (clue) => clue.dailyDouble);
   manager.startGame('host-1', games[0].id);
   manager.openClue('host-1', location);
   manager.setDailyDouble('host-1', { playerId: first.playerId, wager: 400 });
 
-  manager.openAnswerKey('host-1');
-  const moderated = manager.stateFor('host-1', catalog).currentClue;
-  assert.equal(moderated.hostKeyOutcome, 'moderator');
-  assert.equal(moderated.ineligiblePlayerIds.includes(hostPlayerId), false);
-  assert.equal(moderated.expectedAnswer, location.clue.answer);
-
-  manager.leaveRoom('player-1');
-  assert.throws(
-    () => manager.setDailyDouble('host-1', { playerId: hostPlayerId, wager: 400 }),
-    (error) => error.code === 'PLAYER_INELIGIBLE',
-  );
-  manager.setDailyDouble('host-1', { playerId: second.playerId, wager: 400 });
-  manager.scoreClue('host-1', { playerId: second.playerId, correct: true });
-  assert.equal(manager.stateFor('host-1', catalog).players.find((player) => player.id === second.playerId).score, 400);
-});
-
-test('rejects the wrong Daily Double contestant and safely reopens the wager if the selected player leaves', () => {
-  const { catalog, first, games, manager, second } = setupRoom();
-  const location = locateClue(games[0], (clue) => clue.dailyDouble);
-  manager.startGame('host-1', games[0].id);
-  manager.openClue('host-1', location);
-  manager.setDailyDouble('host-1', { playerId: first.playerId, wager: 500 });
-
-  assert.throws(
-    () => manager.scoreClue('host-1', { playerId: second.playerId, correct: true }),
-    (error) => error.code === 'WRONG_DAILY_PLAYER',
-  );
   manager.leaveRoom('player-1');
   const reopened = manager.stateFor('host-1', catalog).currentClue;
   assert.equal(reopened.phase, 'daily-wager');
   assert.equal(reopened.dailyPlayerId, null);
   assert.equal(reopened.question, null);
-
   manager.setDailyDouble('host-1', { playerId: second.playerId, wager: 400 });
-  manager.scoreClue('host-1', { playerId: second.playerId, correct: true });
-  assert.equal(manager.stateFor('host-1', catalog).players[0].score, 400);
+  const clueKey = manager.stateFor('player-2', catalog).currentClue.clueKey;
+  manager.openPlayerAnswer('player-2', { clueKey });
+  manager.selfScoreClue('player-2', { clueKey, correct: true });
+  assert.equal(manager.stateFor('host-1', catalog).players.find((player) => player.id === second.playerId).score, 400);
 });
 
-test('a revealed Daily Double closes if its selected contestant leaves', () => {
+test('Daily Double rejects answer checks and judgments from the wrong contestant', () => {
+  const { catalog, first, games, manager } = setupRoom();
+  const location = locateClue(games[0], (clue) => clue.dailyDouble);
+  manager.startGame('host-1', games[0].id);
+  manager.openClue('host-1', location);
+  manager.setDailyDouble('host-1', { playerId: first.playerId, wager: 500 });
+  const clueKey = manager.stateFor('player-1', catalog).currentClue.clueKey;
+  assert.throws(
+    () => manager.openPlayerAnswer('player-2', { clueKey }),
+    (error) => error.code === 'NOT_RESPONDER',
+  );
+  assert.throws(
+    () => manager.selfScoreClue('player-2', { clueKey, correct: true }),
+    (error) => error.code === 'NOT_RESPONDER',
+  );
+  manager.openPlayerAnswer('player-1', { clueKey });
+  assert.throws(
+    () => manager.selfScoreClue('player-1', { clueKey: 'stale:key', correct: true }),
+    (error) => error.code === 'STALE_CLUE',
+  );
+  manager.selfScoreClue('player-1', { clueKey, correct: true });
+  assert.equal(manager.stateFor('host-1', catalog).players.find((player) => player.id === first.playerId).score, 500);
+});
+
+test('a Daily Double closes if its contestant leaves after seeing the private answer', () => {
   const { catalog, first, games, manager } = setupRoom();
   const location = locateClue(games[0], (clue) => clue.dailyDouble);
   manager.startGame('host-1', games[0].id);
   manager.openClue('host-1', location);
   manager.setDailyDouble('host-1', { playerId: first.playerId, wager: 400 });
-  manager.revealAnswer('host-1');
+  const clueKey = manager.stateFor('player-1', catalog).currentClue.clueKey;
+  manager.openPlayerAnswer('player-1', { clueKey });
   manager.leaveRoom('player-1');
 
   const hostState = manager.stateFor('host-1', catalog);
@@ -496,15 +538,19 @@ test('runs private Final Jeopardy wagers and responses through final standings',
   hostState = manager.stateFor('host-1', catalog);
   assert.equal(hostState.final.phase, 'clue');
   assert.equal(Object.hasOwn(hostState.final.submissions[0], 'response'), false);
-  assert.equal(manager.stateFor('player-1', catalog).final.answer, null);
+  assert.equal(Object.hasOwn(manager.stateFor('player-1', catalog).final, 'answer'), false);
 
   manager.advanceFinal('host-1');
   hostState = manager.stateFor('host-1', catalog);
-  assert.equal(hostState.final.submissions[0].response, 'What is a test response?');
-  assert.ok(hostState.final.answer);
+  assert.equal(Object.hasOwn(hostState.final.submissions[0], 'response'), false);
+  assert.equal(Object.hasOwn(hostState.final, 'answer'), false);
+  const firstFinal = manager.stateFor('player-1', catalog).final;
+  assert.ok(firstFinal.answer);
+  assert.equal(firstFinal.yourResponse, 'What is a test response?');
+  assert.equal(firstFinal.canSelfScore, true);
 
-  manager.scoreFinal('host-1', { playerId: first.playerId, correct: true });
-  manager.scoreFinal('host-1', { playerId: second.playerId, correct: false });
+  manager.selfScoreFinal('player-1', { correct: true });
+  manager.selfScoreFinal('player-2', { correct: false });
   manager.finishFinal('host-1');
   hostState = manager.stateFor('host-1', catalog);
   assert.equal(hostState.final.phase, 'complete');
@@ -512,7 +558,7 @@ test('runs private Final Jeopardy wagers and responses through final standings',
   assert.equal(hostState.players.find((player) => player.id === second.playerId).score, 300);
 });
 
-test('host contestant can submit private Final Jeopardy entries while retaining judging controls', () => {
+test('a creator who joins the roster is eligible for Final Jeopardy without seeing the answer early', () => {
   const { catalog, first, games, manager } = setupRoom();
   manager.joinHostAsPlayer('host-1', { name: 'Alex' });
   const hostPlayerId = manager.stateFor('host-1', catalog).you.id;
@@ -521,63 +567,32 @@ test('host contestant can submit private Final Jeopardy entries while retaining 
   manager.adjustScore('host-1', { playerId: first.playerId, delta: 800 });
   manager.startFinal('host-1');
 
-  let hostState = manager.stateFor('host-1', catalog);
+  const hostState = manager.stateFor('host-1', catalog);
+  assert.equal(hostState.final.submissions.some((entry) => entry.playerId === hostPlayerId), true);
   assert.equal(hostState.final.eligible, true);
   assert.equal(hostState.final.yourMaxWager, 1000);
-  assert.equal(hostState.final.yourWagerSubmitted, false);
-  manager.adjustScore('host-1', { playerId: hostPlayerId, delta: 1000 });
-  assert.throws(
-    () => manager.submitFinalWager('host-1', 1001),
-    (error) => error.code === 'INVALID_WAGER',
-  );
-  manager.adjustScore('host-1', { playerId: hostPlayerId, delta: -1000 });
-  manager.submitFinalWager('host-1', 600);
-  assert.throws(
-    () => manager.submitFinalWager('host-1', 100),
-    (error) => error.code === 'ALREADY_SUBMITTED',
-  );
-  manager.submitFinalWager('player-1', 500);
-  hostState = manager.stateFor('host-1', catalog);
-  assert.equal(hostState.final.yourWager, 600);
-  assert.equal(hostState.final.yourWagerSubmitted, true);
-  assert.equal(Object.hasOwn(hostState.final.submissions.find((entry) => entry.playerId === hostPlayerId), 'wager'), false);
-  assert.equal(JSON.stringify(manager.stateFor('player-1', catalog).final).includes('600'), false);
-
-  manager.advanceFinal('host-1', 'wager');
-  manager.submitFinalResponse('host-1', 'What is the host response?');
-  assert.throws(
-    () => manager.submitFinalResponse('host-1', 'What is a replacement response?'),
-    (error) => error.code === 'ALREADY_SUBMITTED',
-  );
-  manager.submitFinalResponse('player-1', 'What is the player response?');
-  assert.equal(manager.stateFor('host-1', catalog).final.yourResponseSubmitted, true);
-  assert.equal(JSON.stringify(manager.stateFor('player-1', catalog).final).includes('host response'), false);
-
-  manager.advanceFinal('host-1', 'clue');
-  hostState = manager.stateFor('host-1', catalog);
-  assert.equal(hostState.final.submissions.find((entry) => entry.playerId === hostPlayerId).response, 'What is the host response?');
-  manager.scoreFinal('host-1', { playerId: hostPlayerId, correct: true });
-  manager.scoreFinal('host-1', { playerId: first.playerId, correct: false });
-  manager.finishFinal('host-1');
-  hostState = manager.stateFor('host-1', catalog);
-  assert.equal(hostState.final.yourResult, true);
-  assert.equal(hostState.you.score, 1600);
+  assert.equal(Object.hasOwn(hostState.final, 'answer'), false);
+  manager.submitFinalWager('host-1', 500);
+  assert.equal(manager.stateFor('host-1', catalog).final.yourWager, 500);
+  assert.throws(() => manager.selfScoreFinal('host-1', { correct: true }), (error) => error.code === 'FINAL_NOT_READY');
 });
 
-test('zero-score host contestant is excluded from Final Jeopardy', () => {
+test('Final answer is sent to contestant screens but never the host display', () => {
   const { catalog, first, games, manager } = setupRoom();
-  manager.joinHostAsPlayer('host-1', { name: 'Alex' });
   manager.startGame('host-1', games[0].id);
   manager.adjustScore('host-1', { playerId: first.playerId, delta: 200 });
   manager.startFinal('host-1');
+  manager.submitFinalWager('player-1', 100);
+  manager.advanceFinal('host-1', 'wager');
+  manager.submitFinalResponse('player-1', 'What is my final response?');
+  manager.advanceFinal('host-1', 'clue');
 
   const hostState = manager.stateFor('host-1', catalog);
-  assert.equal(hostState.final.eligible, false);
-  assert.equal(hostState.final.yourMaxWager, 0);
-  assert.throws(
-    () => manager.submitFinalWager('host-1', 0),
-    (error) => error.code === 'NOT_ELIGIBLE',
-  );
+  const playerState = manager.stateFor('player-1', catalog);
+  assert.equal(Object.hasOwn(hostState.final, 'answer'), false);
+  assert.equal(Object.hasOwn(hostState.final.submissions[0], 'response'), false);
+  assert.ok(playerState.final.answer);
+  assert.equal(playerState.final.yourResponse, 'What is my final response?');
 });
 
 test('removing a remote finalist cannot remove the host contestant or deadlock Final', () => {
@@ -589,15 +604,13 @@ test('removing a remote finalist cannot remove the host contestant or deadlock F
   manager.adjustScore('host-1', { playerId: first.playerId, delta: 400 });
   manager.adjustScore('host-1', { playerId: second.playerId, delta: 200 });
   manager.startFinal('host-1');
-  manager.advanceFinal('host-1', 'wager');
-  manager.advanceFinal('host-1', 'clue');
+  manager.advanceFinal('host-1', { expectedPhase: 'wager', force: true });
+  manager.advanceFinal('host-1', { expectedPhase: 'clue', force: true });
 
   assert.throws(
     () => manager.removePlayer('host-1', hostPlayerId),
     (error) => error.code === 'CANNOT_REMOVE_HOST',
   );
-  manager.scoreFinal('host-1', { playerId: hostPlayerId, correct: true });
-  manager.scoreFinal('host-1', { playerId: first.playerId, correct: false });
   manager.removePlayer('host-1', second.playerId);
   assert.throws(() => manager.stateFor('player-2', catalog), (error) => error.code === 'NOT_IN_ROOM');
   manager.finishFinal('host-1');
@@ -630,6 +643,43 @@ test('Final Jeopardy excludes nonpositive scores, locks submissions, and rejects
   );
 });
 
+test('Final Jeopardy waits for every submission unless the host explicitly forces an advance', () => {
+  const { catalog, first, games, manager, second } = setupRoom();
+  manager.startGame('host-1', games[0].id);
+  manager.adjustScore('host-1', { playerId: first.playerId, delta: 500 });
+  manager.adjustScore('host-1', { playerId: second.playerId, delta: 300 });
+  manager.startFinal('host-1');
+
+  manager.submitFinalWager('player-1', 200);
+  assert.throws(
+    () => manager.advanceFinal('host-1', { expectedPhase: 'wager' }),
+    (error) => error.code === 'FINAL_SUBMISSIONS_PENDING',
+  );
+  assert.equal(manager.stateFor('host-1', catalog).final.phase, 'wager');
+
+  manager.advanceFinal('host-1', { expectedPhase: 'wager', force: true });
+  const forcedWagerState = manager.stateFor('player-2', catalog);
+  assert.equal(forcedWagerState.final.phase, 'clue');
+  assert.equal(forcedWagerState.final.yourWager, 0);
+  assert.equal(forcedWagerState.final.yourWagerSubmitted, false);
+
+  manager.submitFinalResponse('player-1', 'What is ready?');
+  assert.throws(
+    () => manager.advanceFinal('host-1', { expectedPhase: 'clue' }),
+    (error) => error.code === 'FINAL_SUBMISSIONS_PENDING',
+  );
+  assert.equal(manager.stateFor('host-1', catalog).final.phase, 'clue');
+
+  manager.advanceFinal('host-1', { expectedPhase: 'clue', force: true });
+  const forcedResponseState = manager.stateFor('host-1', catalog);
+  const missingResponse = forcedResponseState.final.submissions.find((entry) => entry.playerId === second.playerId);
+  assert.equal(forcedResponseState.final.phase, 'answer');
+  assert.equal(missingResponse.responseSubmitted, false);
+  assert.equal(missingResponse.scored, true);
+  assert.equal(missingResponse.correct, false);
+  assert.equal(forcedResponseState.players.find((player) => player.id === second.playerId).score, 300);
+});
+
 test('cleanup retains connected rooms and expires only fully disconnected idle rooms', () => {
   const games = loadGames();
   let timestamp = 0;
@@ -660,8 +710,12 @@ test('rejects player attempts to use host actions', () => {
   const location = locateClue(games[0], (clue) => !clue.dailyDouble);
   manager.openClue('host-1', location);
   assert.throws(
-    () => manager.openAnswerKey('player-1'),
+    () => manager.revealAnswer('player-1'),
     (error) => error.code === 'HOST_ONLY',
+  );
+  assert.throws(
+    () => manager.openPlayerAnswer('host-1', { clueKey: '0:0' }),
+    (error) => error.code === 'CONTESTANT_ONLY',
   );
   assert.throws(
     () => manager.buzz('host-1'),
