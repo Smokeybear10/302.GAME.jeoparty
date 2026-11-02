@@ -105,6 +105,9 @@ JEOPARDY_ARCHIVE_LIMIT=0 npm start     # full playable archive (the default)
 If the archive file is absent, the server loads the original bank in
 [`data/games`](data/games).
 
+Archived boards contain text only. Some clues refer to images or audio from the
+original broadcast that are not included; use **Skip clue** for those questions.
+
 Each game requires exactly six categories, five clues per category, one Daily
 Double, and one Final Jeopardy clue. This abbreviated example shows the object
 shape:
