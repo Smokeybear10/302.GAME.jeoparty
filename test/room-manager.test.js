@@ -82,6 +82,23 @@ test('host can create, select, and play a room-scoped custom board', () => {
   assert.equal(board.categories.length, 6);
 });
 
+test('the episode catalog is available in the lobby but excluded from gameplay broadcasts', () => {
+  const { catalog, first, games, manager } = setupRoom();
+  const created = manager.createCustomGame('host-1', customGameInput(games[0]));
+  assert.equal(manager.stateFor('host-1', catalog).gameCatalog.length, catalog.length + 1);
+  manager.startGame('host-1', games[0].id);
+  assert.equal(Object.hasOwn(manager.stateFor('host-1', catalog), 'gameCatalog'), false);
+  manager.openClue('host-1', locateClue(games[0], (clue) => !clue.dailyDouble));
+  manager.buzz('player-1');
+  assert.equal(Object.hasOwn(manager.stateFor('host-1', catalog), 'gameCatalog'), false);
+  manager.skipClue('host-1');
+  manager.adjustScore('host-1', { playerId: first.playerId, delta: 200 });
+  manager.startFinal('host-1');
+  assert.equal(Object.hasOwn(manager.stateFor('host-1', catalog), 'gameCatalog'), false);
+  manager.returnToLobby('host-1');
+  assert.equal(manager.stateFor('host-1', catalog).gameCatalog[0].id, created.gameId);
+});
+
 test('custom boards are validated and remain host-only', () => {
   const { games, manager } = setupRoom();
   const incomplete = customGameInput(games[0]);
