@@ -42,6 +42,8 @@ test('game catalog exposes topics but not clues or answers', () => {
 
   assert.equal(catalog.length, 20);
   assert.equal(catalog[0].categories.length, 6);
+  assert.equal(catalog[0].source, 'library');
+  assert.equal(catalog[0].year, null);
   assert.equal(serialized.includes('finalJeopardy'), false);
   assert.equal(serialized.includes('answer'), false);
   assert.equal(serialized.includes('clue'), false);
