@@ -1,10 +1,10 @@
 # Jeoparty! | Multiplayer Trivia
 
-**Live demo: [jeopardy-game-43jc.onrender.com](https://jeopardy-game-43jc.onrender.com)**
+**Live demo: [jeoparty.thomasou.com](https://jeoparty.thomasou.com)**
 
 A browser-based Jeopardy-style game for up to eight players. Share a room link and join from a phone or computer. The room creator can play alongside friends or run a dedicated host screen.
 
-The public site runs on Render's free plan, so the first visit after inactivity can take about a minute. Trivia practice is available at [`/practice`](https://jeopardy-game-43jc.onrender.com/practice), with progress saved in each browser.
+The public site runs on Render's free plan, so the first visit after inactivity can take about a minute. Trivia practice is available at [`/practice`](https://jeoparty.thomasou.com/practice), with progress saved in each browser.
 
 The game can load real historical boards from the compressed archive maintained
 by [howardchung/jeopardy](https://github.com/howardchung/jeopardy). By default it
