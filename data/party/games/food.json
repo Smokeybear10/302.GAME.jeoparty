@@ -1,0 +1,157 @@
+{
+  "id": "food",
+  "title": "Food",
+  "description": "Food · 5 categories · 25 clues",
+  "categories": [
+    {
+      "name": "Food & Drink Words & Phrases",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "Something ill-suited is \"not my\" this 3-word phrase; I prefer English breakfast",
+          "answer": "What is cup of tea?"
+        },
+        {
+          "value": 400,
+          "prompt": "Tread carefully if doing this phrase for being careful not to anger someone (it can use the whole food item or just the shells)",
+          "answer": "What is walking on eggshells?"
+        },
+        {
+          "value": 600,
+          "prompt": "It's a circular representation of relative percentages making up a whole",
+          "answer": "What is a pie chart?"
+        },
+        {
+          "value": 800,
+          "prompt": "To lament a misfortune that can't be changed or corrected",
+          "answer": "What is cry over spilled milk?"
+        },
+        {
+          "value": 1000,
+          "prompt": "This expression means \"earn a living\"; in an old commercial, it was followed by \"fry it up in a pan\"",
+          "answer": "What is bring home the bacon?"
+        }
+      ]
+    },
+    {
+      "name": "Official State Foods",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "No beans about it, this is Texas' state dish",
+          "answer": "What is chili?"
+        },
+        {
+          "value": 400,
+          "prompt": "Like Georgia, South Carolina picked this as its state fruit",
+          "answer": "What is peaches?"
+        },
+        {
+          "value": 600,
+          "prompt": "This tangy dessert is a state food of Florida",
+          "answer": "What is key lime pie?"
+        },
+        {
+          "value": 800,
+          "prompt": "Prized for food & sport, it \"reigns\" as the official state fish of Alaska",
+          "answer": "What is king salmon?"
+        },
+        {
+          "value": 1000,
+          "prompt": "Soft-shelled after molting, this \"colorful\" creature is Maryland's state crustacean",
+          "answer": "What is the blue crab?"
+        }
+      ]
+    },
+    {
+      "name": "Food Crossword Clues",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "Raw fish dish (5)",
+          "answer": "What is sushi?"
+        },
+        {
+          "value": 400,
+          "prompt": "McIlhenny's \"sauce\"y trademark (7)",
+          "answer": "What is Tabasco?"
+        },
+        {
+          "value": 600,
+          "prompt": "\"Blue ribbon\" chicken dish (6,4)",
+          "answer": "What is cordon bleu?"
+        },
+        {
+          "value": 800,
+          "prompt": "Spanish rice dish, or its pan (6)",
+          "answer": "What is paella?"
+        },
+        {
+          "value": 1000,
+          "prompt": "Favored \"sauce\" spice of India (5)",
+          "answer": "What is curry?"
+        }
+      ]
+    },
+    {
+      "name": "Generous Food Portions",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "You gotta break some eggs to make this item; in 1994, 160,000 were used to make a 1,383-square-foot one",
+          "answer": "What is an omelette?"
+        },
+        {
+          "value": 400,
+          "prompt": "At Marshall Field's in 2002, life was like a 3,226-pound box of this",
+          "answer": "What is chocolates?"
+        },
+        {
+          "value": 600,
+          "prompt": "Run as fast as you can, you can't catch this treat; one made in 2003 was 13' 11\" in height",
+          "answer": "What is a gingerbread man?"
+        },
+        {
+          "value": 800,
+          "prompt": "Yes, we have one bunch of these, 473 individual ones in a bunch grown in Spain in 2001",
+          "answer": "What is a banana?"
+        },
+        {
+          "value": 1000,
+          "prompt": "In 1993 chefs from Glasgow's Hilton & others used 80 ox stomachs to make the largest this on record--668 lbs.! Och aye!",
+          "answer": "What is haggis?"
+        }
+      ]
+    },
+    {
+      "name": "Fast Foods",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "Worldwide, this company adds over 500 restaurants yearly & does it all for you",
+          "answer": "What is McDonald's?"
+        },
+        {
+          "value": 400,
+          "prompt": "According to a Gallup poll, a slice of this is the most popular addition to a restaurant sandwich",
+          "answer": "What is a tomato?"
+        },
+        {
+          "value": 600,
+          "prompt": "Until 1985, Ralston Purina, the Dog Chow co., owned this drive-thru chain which serves people chow",
+          "answer": "What is Jack-in-the-Box?"
+        },
+        {
+          "value": 800,
+          "prompt": "In 1966, this company wasn't chicken to hire an aerospace engineer as its food engineer",
+          "answer": "What is Kentucky Fried Chicken?"
+        },
+        {
+          "value": 1000,
+          "prompt": "Some fast-food cha1ns spray this on French fries so they cook up brown, not pasty white",
+          "answer": "What is sugar?"
+        }
+      ]
+    }
+  ]
+}

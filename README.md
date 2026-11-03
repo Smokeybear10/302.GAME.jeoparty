@@ -1,10 +1,10 @@
-# Jeoparty! | Multiplayer Trivia
+# Jeoparty! | Trivia
 
 **Live demo: [jeoparty.thomasou.com](https://jeoparty.thomasou.com)**
 
-A browser-based Jeopardy-style game for up to eight players. Share a room link and join from a phone or computer. The room creator can play alongside friends or run a dedicated host screen.
+Jeopardy-style trivia with multiplayer rooms, a one-screen party mode, and solo practice. Share a room link for up to eight players on separate devices, or gather two to six players around one screen.
 
-The public site runs on Render's free plan, so the first visit after inactivity can take about a minute. Trivia practice is available at [`/practice`](https://jeoparty.thomasou.com/practice), with progress saved in each browser.
+The public site runs on Render's free plan, so the first visit after inactivity can take about a minute. Open [`/party`](https://jeoparty.thomasou.com/party) for local party play or [`/practice`](https://jeoparty.thomasou.com/practice) for solo practice. Both save progress in the current browser.
 
 The game can load real historical boards from the compressed archive maintained
 by [howardchung/jeopardy](https://github.com/howardchung/jeopardy). By default it
@@ -25,6 +25,8 @@ Jeopardy clues. The original 20 boards remain as an offline fallback.
 - Restores host and player sessions after an ordinary Wi-Fi interruption
 - Includes thousands of complete archived games spanning decades of Jeopardy
 - Filters the archive by broadcast year and supports room-scoped custom boards
+- Includes twelve themed party boards and random 7×7 boards from a pool of 14,000 archived clues
+- Saves the full party board, players, scores, and clue progress for later resumption
 
 ## Requirements
 
@@ -72,6 +74,14 @@ The host can adjust scores manually, reset buzzers before an answer check starts
 
 A dedicated host never receives clue or Final Jeopardy answers. A creator who joins as a player follows the same rules as everyone else: the active contestant says their response aloud, selects **Check my response**, and privately checks and scores it. An incorrect response promotes the next queued buzzer; a Daily Double closes after either result. **Show answer to players** reveals an unclaimed answer to contestants. Any contestant can also use **Skip clue**, including after being locked out.
 
+## Play on one screen
+
+Open **Party** from the home page. Choose a themed board or a random 7×7 mix, enter two to six names, and start. The host opens a clue, reveals its answer, and awards or deducts its value from a player, or skips the clue. This mode has no phone buzzers, Daily Doubles, or Final Jeopardy.
+
+The selected board and progress save together in the browser. Share a board link to let another group play the same questions with their own players and scores. Local party answers are available to the host; multiplayer rooms retain their separate private-answer rules.
+
+The party data comes from Buzzer's themed boards and archived clue pool, now consolidated into Jeoparty. The board files live in `data/party/`.
+
 ## Join as a player
 
 1. Open the shared room link on a phone or laptop. For a locally hosted game, use the host's local-network address on the same Wi-Fi.
@@ -116,7 +126,7 @@ If the archive file is absent, the server loads the original bank in
 Archived boards contain text only. Some clues refer to images or audio from the
 original broadcast that are not included; use **Skip clue** for those questions.
 
-Each game requires exactly six categories, five clues per category, one Daily
+Each multiplayer game requires exactly six categories, five clues per category, one Daily
 Double, and one Final Jeopardy clue. This abbreviated example shows the object
 shape:
 
@@ -165,7 +175,10 @@ See the [changelog](CHANGELOG.md) for release history.
 | --- | --- |
 | `server.js` | HTTP server, Socket.IO events, room broadcasts, and local-network addresses |
 | `lib/room-manager.js` | Authoritative room, buzzer, scoring, Daily Double, and Final Jeopardy rules |
-| `lib/game-store.js` | Question-bank selection and validation |
+| `lib/game-store.js` | Multiplayer question-bank selection and validation |
+| `lib/party-games.js` | Themed party boards and seeded random-board generation |
+| `data/party/` | Bundled party boards and the random clue pool |
+| `party.html`, `party.js`, `party-state.js`, `party.css` | Single-screen party play and browser persistence |
 | `lib/howard-archive.js` | Historical episode archive conversion |
 | `scripts/fetch-howard-archive.js` | Downloads and validates the compressed archive |
 | `data/archive/*.gz` | Gitignored Howard archive downloaded locally |

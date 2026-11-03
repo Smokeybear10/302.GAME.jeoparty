@@ -1,0 +1,157 @@
+{
+  "id": "random-mix",
+  "title": "Random Mix",
+  "description": "Random Mix · 5 categories · 25 clues",
+  "categories": [
+    {
+      "name": "Hopper",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "A clodhopper can mean a bumbling oaf or one of these he might wear",
+          "answer": "What is shoes?"
+        },
+        {
+          "value": 400,
+          "prompt": "Here are some kids playing an old-timey version of this game",
+          "answer": "What is hopscotch?"
+        },
+        {
+          "value": 600,
+          "prompt": "To make a grasshopper green, use the green type of this liqueur",
+          "answer": "What is crème de menthe?"
+        },
+        {
+          "value": 800,
+          "prompt": "Seen here, he lays down the law as Jim Hopper on \"Stranger Things\"",
+          "answer": "What is David Harbour?"
+        },
+        {
+          "value": 1000,
+          "prompt": "Eastern is the most common of this common type of rabbit best identified from behind",
+          "answer": "What is a cottontail?"
+        }
+      ]
+    },
+    {
+      "name": "Library Glossary",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "2 essential types of call numbers are Dewey Decimal & this classification system abbreviated L.C.",
+          "answer": "What is the Library of Congress?"
+        },
+        {
+          "value": 400,
+          "prompt": "I.L.L., short for this, won't make you sick; it's just a way of borrowing books from other repositories",
+          "answer": "What is interlibrary loan?"
+        },
+        {
+          "value": 600,
+          "prompt": "Another name for the loan desk is this 4-syllable word, a reference to how the books move around",
+          "answer": "What is circulation?"
+        },
+        {
+          "value": 800,
+          "prompt": "Also a Triple Crown racehorse, it's a reference to a book or magazine including publication date, author & so on",
+          "answer": "What is citation?"
+        },
+        {
+          "value": 1000,
+          "prompt": "Your library may have a reader for this type of film, with reproductions of newspapers & a name from French",
+          "answer": "What is microfiche?"
+        }
+      ]
+    },
+    {
+      "name": "No. 2 Hits",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "Sandwiched between his No. 1 songs \"I Knew You Were Waiting (For Me)\" & \"Faith\" was his No. 2 hit \"I Want Your Sex\"",
+          "answer": "What is George Michael?"
+        },
+        {
+          "value": 400,
+          "prompt": "She had no problem reaching No. 2 with \"Problem\", a song that also features Iggy Azalea",
+          "answer": "What is Ariana Grande?"
+        },
+        {
+          "value": 600,
+          "prompt": "\"When Will I Be Loved\" was a Top 10 hit for this duo in 1960, before Linda Ronstadt's 1975 version",
+          "answer": "What is The Everly Brothers?"
+        },
+        {
+          "value": 800,
+          "prompt": "Nicki Minaj hit No. 2 with this song named for a water snake",
+          "answer": "What is \"Anaconda\"?"
+        },
+        {
+          "value": 1000,
+          "prompt": "In 1975 Barry White reached No. 2 in pop with \"You're The First, The Last\", & this",
+          "answer": "What is My Everything?"
+        }
+      ]
+    },
+    {
+      "name": "\"north\"ern Geography",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "The geographical center of North America is near the town of Rugby in this state",
+          "answer": "What is North Dakota?"
+        },
+        {
+          "value": 400,
+          "prompt": "In 1878-79 Baron Nordenskjold became the first to traverse this route along Europe & Asia's Arctic coast",
+          "answer": "What is the Northeast Passage?"
+        },
+        {
+          "value": 600,
+          "prompt": "Its highest peak is Slieve Donard, which rises 2,796 feet in the Mourne Mountains of County Down",
+          "answer": "What is Northern Ireland?"
+        },
+        {
+          "value": 800,
+          "prompt": "In 1968 vast oil reserves were found in this Alaskan coastal region between the Arctic Ocean & Brooks Range",
+          "answer": "What is the North Slope?"
+        },
+        {
+          "value": 1000,
+          "prompt": "In 1876 the people of this Minnesota city, now home to Carleton College, foiled a raid by Jesse James & his cohorts",
+          "answer": "What is Northfield?"
+        }
+      ]
+    },
+    {
+      "name": "Historical Home Shopping",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "That's right! We have an authentic fake reproduction of this 1776 document signed by John Penn & Josiah Bartlett!",
+          "answer": "What is the Declaration of Independence?"
+        },
+        {
+          "value": 400,
+          "prompt": "In 1852 he was superintendent of West Point! He led the Confederate Army! Now you can buy this historic figure's figurine!",
+          "answer": "What is (Robert E.) Lee?"
+        },
+        {
+          "value": 600,
+          "prompt": "France had 25,000 casualties at this June 1815 battle--don't meet yours by not buying its commemorative coin!",
+          "answer": "What is Waterloo?"
+        },
+        {
+          "value": 800,
+          "prompt": "This world leader may have said he wasn't divine on Jan. 1, 1946, but the prices of his commemorative plates sure are!",
+          "answer": "What is Emperor Hirohito?"
+        },
+        {
+          "value": 1000,
+          "prompt": "Now up, a 4-ton bluestone dating from 2100 B.C. from this English structure! FYI, you pay your own shipping!",
+          "answer": "What is Stonehenge?"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,157 @@
+{
+  "id": "business",
+  "title": "Business",
+  "description": "Business · 5 categories · 25 clues",
+  "categories": [
+    {
+      "name": "That's Big Business",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "You'll find this fast food chain's golden arches at more than 14,000 locations in the U.S. & more than 36,000 worldwide",
+          "answer": "What is McDonald's?"
+        },
+        {
+          "value": 400,
+          "prompt": "In 2017 this shipping company celebrated the opening of its 5,000th \"store\"",
+          "answer": "What is UPS?"
+        },
+        {
+          "value": 600,
+          "prompt": "In January 2020 this Texas-based convenience store chain announced the opening of its 70,000th location",
+          "answer": "What is 7-Eleven?"
+        },
+        {
+          "value": 800,
+          "prompt": "Founded in Virginia in the 1950s, K&K 5&10 experienced some inflation while growing into this nationwide \"Tree\"",
+          "answer": "What is Dollar Tree?"
+        },
+        {
+          "value": 1000,
+          "prompt": "In the mid-1800s he joined up with Luigi Rossi, & their spirits business is still going",
+          "answer": "What is (Alessandro) Martini?"
+        }
+      ]
+    },
+    {
+      "name": "That's None of Your Business",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "Gordon Bowker, who helped found this chain in 1971, wanted to call it Pequod",
+          "answer": "What is Starbucks?"
+        },
+        {
+          "value": 400,
+          "prompt": "This fish-canning business famous for its mermaid is now owned by a Thai company",
+          "answer": "What is Chicken of the Sea?"
+        },
+        {
+          "value": 600,
+          "prompt": "Enhancing business ventures, the first money transfers by telegraph were done by this company in 1871",
+          "answer": "What is Western Union?"
+        },
+        {
+          "value": 800,
+          "prompt": "Last name of a businessman George, who bought the rights to a game called Monopoly in the 1930s",
+          "answer": "What is Parker?"
+        },
+        {
+          "value": 1000,
+          "prompt": "The first practical typewriter was manufactured in the 1870s by this famous gun-making company",
+          "answer": "What is Remington?"
+        }
+      ]
+    },
+    {
+      "name": "Business News",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "Be the first to find one of these in a Netscape program & they may give you $1,000",
+          "answer": "What is Bug?"
+        },
+        {
+          "value": 400,
+          "prompt": "Doing a bit of \"Moonlighting\", he's lent his likeness to the Sony PlayStation game \"Apocalypse\"",
+          "answer": "What is Bruce Willis?"
+        },
+        {
+          "value": 600,
+          "prompt": "This Memphis company suspended service guarantees when UPS went on strike in 1997",
+          "answer": "What is Federal Express?"
+        },
+        {
+          "value": 800,
+          "prompt": "1996 Miss Universe Alicia Machado opened a Subway sandwich shop in her hometown in this South American country",
+          "answer": "What is Venezuela?"
+        },
+        {
+          "value": 1000,
+          "prompt": "On June 19, 1997 it surpassed \"A Chorus Line\" as Broadway's longest-running show",
+          "answer": "What is Cats?"
+        }
+      ]
+    },
+    {
+      "name": "Starting a Legal Home Business",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "You might want to start with the S.B.A., this government administration",
+          "answer": "What is Small Business Administration?"
+        },
+        {
+          "value": 400,
+          "prompt": "When a great idea hits you, protect yourself by getting a copyright, a patent or one of these registered product symbols",
+          "answer": "What is a trademark?"
+        },
+        {
+          "value": 600,
+          "prompt": "Instead of buying equipment, you can arrange this type of long-term rental & write some of it off on your taxes",
+          "answer": "What is a lease?"
+        },
+        {
+          "value": 800,
+          "prompt": "From the Latin for \"that which is found\", it's a detailed list of all your goods in stock for sale",
+          "answer": "What is an inventory?"
+        },
+        {
+          "value": 1000,
+          "prompt": "After you make your millions, do this \"watery\" act to your assets, meaning to convert them all to cash",
+          "answer": "What is liquidate?"
+        }
+      ]
+    },
+    {
+      "name": "The Tv Business",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "That big mansion on \"Dallas\" was paid for by an oil company with this family name on it",
+          "answer": "What is Ewing?"
+        },
+        {
+          "value": 400,
+          "prompt": "LutherCorp was a fictional company on this super TV show",
+          "answer": "What is Smallville?"
+        },
+        {
+          "value": 600,
+          "prompt": "The business was pleasure at this club on \"The Sopranos\", actually The Satin Doll on Route 17",
+          "answer": "What is the Bada Bing?"
+        },
+        {
+          "value": 800,
+          "prompt": "TV advertisers' coveted age group is this 31-year span",
+          "answer": "What is 18-49?"
+        },
+        {
+          "value": 1000,
+          "prompt": "To the intrepid hackers of this TV show, the \"E\" of E-Corp stands for evil",
+          "answer": "What is Mr. Robot?"
+        }
+      ]
+    }
+  ]
+}

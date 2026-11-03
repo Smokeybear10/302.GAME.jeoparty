@@ -1,0 +1,157 @@
+{
+  "id": "history",
+  "title": "History",
+  "description": "History · 5 categories · 25 clues",
+  "categories": [
+    {
+      "name": "Great People of History",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "Aristotle was a tutor of this world conqueror",
+          "answer": "What is Alexander the Great?"
+        },
+        {
+          "value": 400,
+          "prompt": "It's the more familiar way that Holy Roman Emperor Charles the Great is known",
+          "answer": "What is Charlemagne?"
+        },
+        {
+          "value": 600,
+          "prompt": "King Darius the Great of this empire sent an army into Greece in 490 B.C., but it was defeated at Marathon",
+          "answer": "What is the Persian Empire?"
+        },
+        {
+          "value": 800,
+          "prompt": "A prolific fighter & builder, he ruled Egypt from about 1290 to 1223 B.C.",
+          "answer": "What is Ramses the Great?"
+        },
+        {
+          "value": 1000,
+          "prompt": "The Wailing Wall in Jerusalem was a retaining wall this \"Great\" king had built to shore up the temple platform",
+          "answer": "What is Herod the Great?"
+        }
+      ]
+    },
+    {
+      "name": "Telephone History",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "In 1991 this telephone company launched its Friends & Family promotion",
+          "answer": "What is MCI?"
+        },
+        {
+          "value": 400,
+          "prompt": "As of July 1, 1968 you could dial this 3-digit number in New York City & get the police",
+          "answer": "What is 911?"
+        },
+        {
+          "value": 600,
+          "prompt": "On Oct. 30, 1938 phone traffic peaked in cities all over America as people discussed this broadcast",
+          "answer": "What is the \"War of the Worlds\"?"
+        },
+        {
+          "value": 800,
+          "prompt": "In 1980 Dial-It National Sports became the first service on this new area code",
+          "answer": "What is 1-900?"
+        },
+        {
+          "value": 1000,
+          "prompt": "In 1880 he invented the photophone, a device that sent messages through the air on beams of light",
+          "answer": "What is Alexander Graham Bell?"
+        }
+      ]
+    },
+    {
+      "name": "Public History",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "It's the site where the mission seen here began in 1995 (space shuttle liftoff)",
+          "answer": "What is Cape Canaveral?"
+        },
+        {
+          "value": 400,
+          "prompt": "They're the 2 historic former presidents seen here in 1992 (at a ranch)",
+          "answer": "What is Ronald Reagan & Mikhail Gorbachev?"
+        },
+        {
+          "value": 600,
+          "prompt": "Rhyming nickname of the man seen here who kept the world informed in 1991",
+          "answer": "What is \"Stormin' Norman\" Schwarzkopf?"
+        },
+        {
+          "value": 800,
+          "prompt": "The \"thrilling\" Manila brawler seen here in 1975 (he lost)",
+          "answer": "What is Joe Frazier?"
+        },
+        {
+          "value": 1000,
+          "prompt": "He's the deposed dictator seen here in custody (captured in 1989)",
+          "answer": "What is Manuel Noriega?"
+        }
+      ]
+    },
+    {
+      "name": "Word History",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "Norman Mailer added a suffix to \"fact\" to get this, now meaning a fact of little importance",
+          "answer": "What is a factoid?"
+        },
+        {
+          "value": 400,
+          "prompt": "You can thank Ottoman imports for the name of this bird that was once confused with the guinea fowl",
+          "answer": "What is turkey?"
+        },
+        {
+          "value": 600,
+          "prompt": "Reviewing a murder mystery in 1930, Donald Gordon coined this inquisitive 3-words-in-one word for a detective story",
+          "answer": "What is a whodunnit?"
+        },
+        {
+          "value": 800,
+          "prompt": "English words drawn from the Algonquian language include moose, terrapin & this other word for groundhog",
+          "answer": "What is woodchuck?"
+        },
+        {
+          "value": 1000,
+          "prompt": "The Latin mulsus, meaning \"sweet\", gave us the name of this chocolate dessert",
+          "answer": "What is mousse?"
+        }
+      ]
+    },
+    {
+      "name": "Computer History",
+      "clues": [
+        {
+          "value": 200,
+          "prompt": "This removable item used for data storage was introduced in 1971; the first one was 8 inches square",
+          "answer": "What is floppy disk?"
+        },
+        {
+          "value": 400,
+          "prompt": "The alternative to hard disk wasn't called soft disk but this, & 5 billion a year were sold in the mid-'90s",
+          "answer": "What is floppy disk?"
+        },
+        {
+          "value": 600,
+          "prompt": "This company whose name is synonymous with copying introduced the first hand-held mouse in 1973",
+          "answer": "What is Xerox?"
+        },
+        {
+          "value": 800,
+          "prompt": "Even before all the polls closed, CBS used this huge computer to predict the result of the 1952 presidential election",
+          "answer": "What is UNIVAC?"
+        },
+        {
+          "value": 1000,
+          "prompt": "The name of this early programming language is an acronym starting \"Beginner's All-purpose\"",
+          "answer": "What is BASIC?"
+        }
+      ]
+    }
+  ]
+}
