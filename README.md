@@ -34,8 +34,8 @@ Jeopardy clues. The original 20 boards remain as an offline fallback.
 ## Start the server
 
 ```bash
-git clone https://github.com/Smokeybear10/303-GAME.JEOPARDY.git
-cd 303-GAME.JEOPARDY
+git clone https://github.com/Smokeybear10/303.GAME.jeoparty.git
+cd 303.GAME.jeoparty
 npm install
 npm run fetch:archive
 npm start
