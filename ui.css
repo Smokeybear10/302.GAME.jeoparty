@@ -168,53 +168,12 @@ h2,
 h3 {
   font-family: var(--body);
 }
-.hub-brand,
-.hub-brand span,
-.mini-logo {
-  text-shadow: none;
-}
 
 /* Public lobby */
 .landing {
   width: 100%;
   min-height: 100vh;
   padding: 0 0 28px;
-}
-.hub-nav {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  width: 100%;
-  min-height: 68px;
-  margin: 0;
-  padding: 0 max(24px, calc((100vw - 1120px) / 2));
-  background: #fff;
-  border: 0;
-  border-bottom: 1px solid var(--line);
-  border-radius: 0;
-  box-shadow: none;
-}
-.hub-brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 44px;
-  color: var(--white);
-  font-family: var(--body);
-  font-size: 1.35rem;
-  font-weight: 700;
-  letter-spacing: -0.035em;
-  text-decoration: none;
-}
-.hub-brand::before { content: none; }
-.brand-mark { width: 24px; height: 24px; flex-shrink: 0; color: var(--action-blue); }
-.brand-party { color: var(--action-blue); }
-.hub-actions { display: flex; gap: 8px; }
-.hub-actions a.button { text-decoration: none; }
-.hub-actions .button {
-  padding: 8px 13px;
-  font-size: 0.8rem;
 }
 .landing-shell {
   width: min(1120px, calc(100% - 48px));
@@ -241,12 +200,13 @@ h3 {
   line-height: 1.5;
 }
 .landing-heading .button { flex-shrink: 0; }
+.landing-heading-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .landing.is-invite .landing-shell { max-width: 440px; padding-top: 56px; }
 .landing.is-invite .landing-heading { margin-bottom: 28px; }
 .landing.is-invite .landing-heading p { max-width: none; margin-top: 10px; }
 .landing.is-invite .landing-workspace { grid-template-columns: 1fr; grid-template-areas: "join"; }
 .landing.is-invite .join-form { grid-template-columns: 1fr; gap: 20px; }
-.landing.is-invite :is(.hub-actions, #create-room-button, #join-title, .public-game-browser, .landing-address, .site-footnote) { display: none; }
+.landing.is-invite :is(.landing-heading-actions, #join-title, .public-game-browser, .landing-address, .site-footnote) { display: none; }
 .landing.is-invite .join-form input { height: 48px; font-size: 1rem; }
 .landing-workspace {
   display: grid;
@@ -516,13 +476,6 @@ h3 {
   border-bottom: 1px solid var(--line);
   box-shadow: none;
   backdrop-filter: none;
-}
-.mini-logo {
-  color: var(--white);
-  font-family: var(--display);
-  font-size: 1.2rem;
-  font-weight: 700;
-  letter-spacing: -0.03em;
 }
 .room-code {
   color: var(--white);
@@ -2120,11 +2073,8 @@ h3 {
   .host-game-row { grid-template-columns: 145px minmax(0, 1fr) 20px; gap: 12px; }
 }
 @media (max-width: 760px) {
-  .hub-nav { min-height: 64px; padding-inline: 20px; gap: 12px; }
-  .hub-brand { font-size: 1.2rem; }
-  .hub-actions .button { font-size: 0.75rem; padding-inline: 12px; }
   .landing-shell { width: calc(100% - 40px); padding-top: 28px; }
-  .landing-heading { align-items: flex-start; gap: 18px; margin-bottom: 24px; }
+  .landing-heading { flex-wrap: wrap; align-items: center; gap: 18px; margin-bottom: 24px; }
   .landing-heading h1 { font-size: 1.5rem; }
   .landing-heading p { max-width: 24ch; font-size: 0.8rem; }
   .landing-heading .button { padding: 10px 13px; font-size: 0.8rem; }
@@ -2334,13 +2284,6 @@ h3 {
   }
   .join-panel .join-form .button {
     grid-column: 1/-1;
-  }
-  .hub-nav {
-    padding-inline: 12px;
-  }
-  .hub-actions .button {
-    padding-inline: 9px;
-    font-size: 0.7rem;
   }
   .lobby-preview-header {
     align-items: flex-start;

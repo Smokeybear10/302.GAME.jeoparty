@@ -11,6 +11,7 @@
     <title>Jeoparty!</title>
     <link rel="stylesheet" href="/style.css" />
     <link rel="stylesheet" href="/ui.css" />
+    <link rel="stylesheet" href="/site-header.css" />
     <script src="/socket.io/socket.io.js" defer></script>
     <script src="/app.js" defer></script>
   </head>
@@ -21,22 +22,15 @@
     </div>
     <main id="app">
       <section class="landing" id="landing-screen">
-        <header class="hub-nav">
-          <a class="hub-brand" href="/" aria-label="Jeoparty home">
+        <header class="site-header">
+          <a class="site-brand" href="/" aria-label="Jeoparty home">
             <svg class="brand-mark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M2 3h5v7H2zm7.5 0h5v7h-5zM17 3h5v7h-5zM2 12h5v9H2zm7.5 0h5v9h-5zM17 12h5v9h-5z" /></svg>
             <span>Jeo<span class="brand-party">party!</span></span>
           </a>
-          <div class="hub-actions">
-            <a class="button button-secondary" href="/practice">Practice</a>
-            <button
-              class="button button-secondary"
-              id="create-custom-room-button"
-              type="button"
-              disabled
-            >
-              Custom board
-            </button>
-          </div>
+          <nav aria-label="Main navigation">
+            <a href="/" aria-current="page">Multiplayer</a>
+            <a href="/practice">Practice</a>
+          </nav>
         </header>
         <div class="landing-shell">
           <div class="landing-heading">
@@ -44,7 +38,10 @@
               <h1 id="landing-title">Game lobby</h1>
               <p id="invite-intro" hidden>Enter your name to join.</p>
             </div>
-            <button class="button button-primary" id="create-room-button" type="button" disabled>Create room <span aria-hidden="true">+</span></button>
+            <div class="landing-heading-actions">
+              <button class="button button-secondary" id="create-custom-room-button" type="button" disabled>Custom board</button>
+              <button class="button button-primary" id="create-room-button" type="button" disabled>Create room <span aria-hidden="true">+</span></button>
+            </div>
           </div>
           <div class="landing-workspace">
             <aside class="landing-join-rail">
@@ -165,7 +162,10 @@
       <section class="room-shell hidden" id="room-screen">
         <header class="room-header">
           <div class="room-brand">
-            <span class="mini-logo">Jeo<span class="brand-party">party!</span></span>
+            <span class="site-brand">
+              <svg class="brand-mark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M2 3h5v7H2zm7.5 0h5v7h-5zM17 3h5v7h-5zM2 12h5v9H2zm7.5 0h5v9h-5zM17 12h5v9h-5z" /></svg>
+              <span>Jeo<span class="brand-party">party!</span></span>
+            </span>
           </div>
           <div class="room-identity">
             <span class="room-label">ROOM</span

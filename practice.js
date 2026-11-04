@@ -66,6 +66,12 @@ function syncPracticeOptions() {
     ? `All ${selectedCount}` : `${selectedCount} selected`;
 }
 
+function focusPracticeHeading(selector) {
+  const heading = practiceElements.question.querySelector(selector);
+  heading?.focus({ preventScroll: true });
+  heading?.scrollIntoView({ block: 'start' });
+}
+
 function renderPracticeQuestion({ focus = false } = {}) {
   if (!practiceQuestion) {
     const noTopics = practiceProgress.selectedTopics.length === 0;
@@ -95,7 +101,7 @@ function renderPracticeQuestion({ focus = false } = {}) {
       </div>
       <section class="answer-section" id="practice-answer" aria-labelledby="practice-answer-title" hidden>
         <p class="answer-label">Answer</p>
-        <h3 id="practice-answer-title">${practiceEscape(question.answer)}</h3>
+        <h3 id="practice-answer-title" tabindex="-1">${practiceEscape(question.answer)}</h3>
         <p class="answer-explanation">${practiceEscape(question.explanation)}</p>
         ${question.source?.url?.startsWith('https://') ? `<a class="answer-source" href="${practiceEscape(question.source.url)}" target="_blank" rel="noopener noreferrer">${practiceEscape(question.source.label)} ↗</a>` : ''}
         <p class="answer-rating">How did you do?</p>
@@ -105,7 +111,7 @@ function renderPracticeQuestion({ focus = false } = {}) {
         </div>
       </section>`;
   }
-  if (focus) practiceElements.question.querySelector('h2')?.focus({ preventScroll: true });
+  if (focus) focusPracticeHeading('h2');
 }
 
 function nextPracticeQuestion({ focus = false } = {}) {
@@ -160,7 +166,7 @@ practiceElements.question.addEventListener('click', (event) => {
     practiceRevealed = true;
     practiceElements.question.querySelector('#reveal-actions').hidden = true;
     practiceElements.question.querySelector('#practice-answer').hidden = false;
-    practiceElements.question.querySelector('[data-practice-action="known"]').focus({ preventScroll: true });
+    focusPracticeHeading('#practice-answer-title');
     practiceElements.status.textContent = `Answer: ${practiceQuestion.answer}. ${practiceQuestion.explanation}`;
   } else if (action === 'skip') {
     nextPracticeQuestion({ focus: true });
@@ -189,6 +195,11 @@ window.addEventListener('storage', (event) => {
 });
 
 syncPracticeOptions();
-if (window.matchMedia('(max-width: 760px)').matches) document.querySelector('#topic-filters').open = false;
+const practiceMobileLayout = window.matchMedia('(max-width: 760px)');
+const practiceFilters = document.querySelector('#topic-filters');
+practiceFilters.open = !practiceMobileLayout.matches;
+practiceMobileLayout.addEventListener('change', (event) => {
+  practiceFilters.open = !event.matches;
+});
 renderPracticeProgress();
 nextPracticeQuestion();
