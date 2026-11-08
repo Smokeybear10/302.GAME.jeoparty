@@ -53,7 +53,7 @@ test('completed games retain tied final scores and a stable completion time with
   assert.deepEqual(f.manager.stateFor('host', []).completedGames, []);
   const result = complete(f);
   assert.deepEqual(result, {
-    id: runId, gameId: f.games[0].id, title: f.games[0].title, custom: false,
+    id: runId, gameId: f.games[0].id, title: f.games[0].title, custom: false, gameMode: 'full',
     completedAt: result.completedAt, revision: 1,
     players: [{ id: f.first.playerId, name: 'Maya', score: 600 }, { id: f.second.playerId, name: 'Theo', score: 600 }],
   });

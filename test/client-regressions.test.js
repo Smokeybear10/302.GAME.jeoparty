@@ -95,6 +95,7 @@ function startClient(fetchResponse = () => new Promise(() => {}), {
       scrollTo: (x, y) => scrollPositions.push([x, y]),
     },
     io: () => socket,
+    RoomSessions: require('../room-sessions'),
     localStorage: localStore,
     sessionStorage: sessionStore,
     URLSearchParams,
@@ -111,6 +112,136 @@ function startClient(fetchResponse = () => new Promise(() => {}), {
 }
 
 const flushAsync = () => new Promise((resolve) => setImmediate(resolve));
+
+test('a closed-tab seat is offered explicitly and its credential never appears in the page', async () => {
+  const localStore = storage();
+  const games = loadGames();
+  const manager = new RoomManager({ games });
+  const session = manager.createRoom('host');
+  manager.joinHostAsPlayer('host', { name: 'Alex' });
+  const first = startClient(undefined, { localStore });
+  first.evaluate(`roomState = ${JSON.stringify(manager.stateFor('host', catalogGames(games)))}; saveSession(${JSON.stringify(session)});`);
+  const second = startClient(undefined, { localStore });
+  assert.equal(second.evaluate('savedSession()'), null);
+  assert.equal(second.evaluate('roomState'), null);
+  assert.equal(second.node('#saved-rooms').hidden, false);
+  assert.match(second.node('#saved-rooms-list').innerHTML, /Alex/);
+  assert.doesNotMatch(second.node('#saved-rooms-list').innerHTML, new RegExp(session.token));
+  second.evaluate(`var resumePayload; request = async (event, payload) => { resumePayload = payload; return ${JSON.stringify({ session, state: manager.stateFor('host', catalogGames(games)) })}; };`);
+  second.node('#saved-rooms-list').dispatch('click', { target: { closest: (selector) => selector.includes('data-resume') ? { dataset: { resumeSessionIndex: '0' } } : null } });
+  await flushAsync();
+  assert.equal(second.evaluate('resumePayload.token'), session.token);
+  assert.equal(second.evaluate('savedSession().token'), session.token);
+  assert.equal(second.evaluate('roomState.you.name'), 'Alex');
+});
+
+test('Continue saves its credential before the request so an interrupted rejoin can reconnect', async () => {
+  const localStore = storage();
+  const session = new RoomManager({ games: loadGames() }).createRoom('host');
+  require('../room-sessions').createStore(localStore).save(session);
+  const client = startClient(undefined, { localStore });
+  client.evaluate("showToast = () => {}; request = async () => { throw new Error('Connection interrupted'); };");
+  await client.evaluate(`resumeSavedSession(${JSON.stringify(session)})`);
+  assert.equal(client.evaluate('savedSession().token'), session.token);
+  assert.equal(client.evaluate('roomSessions.list().length'), 1);
+});
+
+test('an expired Continue entry is removed without discarding a different room', async () => {
+  const localStore = storage();
+  const manager = new RoomManager({ games: loadGames() });
+  const stale = manager.createRoom('stale');
+  const valid = manager.createRoom('valid');
+  const store = require('../room-sessions').createStore(localStore);
+  store.save(stale);
+  store.save(valid);
+  const client = startClient(undefined, { localStore });
+  client.evaluate("request = async () => { throw Object.assign(new Error('Room expired'), {code:'ROOM_NOT_FOUND'}); };");
+  await client.evaluate(`resumeSavedSession(${JSON.stringify(stale)})`);
+  assert.equal(client.evaluate('roomSessions.list().length'), 1);
+  assert.equal(client.evaluate('roomSessions.list()[0].code'), valid.code);
+  assert.equal(client.evaluate('savedSession()'), null);
+});
+
+test('a hosting handoff updates the saved seat role without losing its player identity', () => {
+  const localStore = storage();
+  const client = startClient(undefined, { localStore });
+  const manager = new RoomManager({ games: loadGames() });
+  const host = manager.createRoom('host');
+  manager.joinHostAsPlayer('host', { name: 'Alex' });
+  const next = manager.joinRoom('next', { code: host.code, name: 'Maya' });
+  client.evaluate(`showToast = () => {}; roomState = ${JSON.stringify(manager.stateFor('host', []))}; saveSession(${JSON.stringify(host)});`);
+  const transfer = manager.transferHost('host', { playerId: next.playerId });
+  client.emit('room:session', { session: transfer.formerHostSession, state: manager.stateFor('host', []), message: 'Hosting passed.' });
+  assert.equal(client.evaluate('savedSession().role'), 'player');
+  assert.equal(client.evaluate('roomSessions.list()[0].role'), 'player');
+  assert.equal(client.evaluate('roomState.you.name'), 'Alex');
+  assert.doesNotMatch(client.node('#room-content').innerHTML, /host-transfer-form/);
+});
+
+test('quick game selection is retained and sent with the start request', async () => {
+  const client = startClient();
+  const games = loadGames();
+  const manager = new RoomManager({ games });
+  const session = manager.createRoom('host');
+  manager.joinHostAsPlayer('host', { name: 'Alex' });
+  client.evaluate(`saveSession(${JSON.stringify(session)}); preferredGameId = ${JSON.stringify(games[0].id)};`);
+  client.emit('room:state', manager.stateFor('host', catalogGames(games)));
+  client.node('#room-content').dispatch('change', { target: { id: 'game-mode', value: 'quick' } });
+  assert.match(client.node('#room-content').innerHTML, /Choose any 15 clues/);
+  assert.equal(client.evaluate('savedSession().preferredGameMode'), 'quick');
+  client.evaluate('var startPayload; request = async (event, payload) => { startPayload = payload; return {ok:true}; };');
+  client.node('#room-content').dispatch('click', { target: { closest: () => ({ dataset: { action: 'start-game', gameId: games[0].id } }) } });
+  await flushAsync();
+  assert.equal(client.evaluate('startPayload.mode'), 'quick');
+});
+
+test('a completed quick board shows 15 of 15, stops picking, and allows zero-score standings', () => {
+  const client = startClient();
+  const games = loadGames();
+  const manager = new RoomManager({ games });
+  const host = manager.createRoom('host');
+  manager.joinRoom('player', { code: host.code, name: 'Alex' });
+  manager.startGame('host', games[0].id, { mode: 'quick' });
+  client.emit('room:state', manager.stateFor('host', []));
+  assert.match(client.node('#room-content').innerHTML, /data-action="next-round"[^>]*disabled[^>]*>Final Jeopardy/);
+  for (let categoryIndex = 0; categoryIndex < 3; categoryIndex += 1) {
+    for (let clueIndex = 0; clueIndex < 5; clueIndex += 1) {
+      manager.openClue('host', { categoryIndex, clueIndex });
+      manager.skipClue('host');
+    }
+  }
+  client.emit('room:state', manager.stateFor('host', []));
+  const html = client.node('#room-content').innerHTML;
+  assert.match(html, /Quick game · 15\/15 played/);
+  assert.match(html, /data-action="next-round"[^>]*>Final standings/);
+  assert.doesNotMatch(html, /data-action="next-round"[^>]*disabled/);
+  const tiles = [...html.matchAll(/<button\s+class="clue-tile [\s\S]*?<\/button>/g)];
+  assert.ok(tiles.every(([tile]) => tile.includes('disabled')));
+});
+
+test('undo controls are host-only and submit the exact scoring action displayed', async () => {
+  const client = startClient();
+  const games = loadGames();
+  const manager = new RoomManager({ games });
+  const host = manager.createRoom('host');
+  manager.joinRoom('player', { code: host.code, name: 'Alex' });
+  manager.startGame('host', games[0].id);
+  const location = games[0].categories.flatMap((category, categoryIndex) => category.clues.map((clue, clueIndex) => ({ categoryIndex, clueIndex, clue }))).find(({ clue }) => !clue.dailyDouble);
+  manager.openClue('host', location);
+  manager.buzz('player');
+  const clueKey = manager.stateFor('player', []).currentClue.clueKey;
+  manager.openPlayerAnswer('player', { clueKey });
+  manager.selfScoreClue('player', { clueKey, correct: false });
+  client.emit('room:state', manager.stateFor('host', []));
+  const actionId = manager.stateFor('host', []).scoreUndo.id;
+  assert.match(client.node('#room-content').innerHTML, /Undo last score/);
+  client.evaluate('var undoPayload; request = async (event, payload) => { undoPayload = payload; return {ok:true}; };');
+  client.node('#room-content').dispatch('click', { target: { closest: () => ({ dataset: { action: 'undo-score', scoreActionId: actionId } }) } });
+  await flushAsync();
+  assert.equal(client.evaluate('undoPayload.actionId'), actionId);
+  client.emit('room:state', manager.stateFor('player', []));
+  assert.doesNotMatch(client.node('#room-content').innerHTML, /Undo last score/);
+});
 
 function completedResult(overrides = {}) {
   return {

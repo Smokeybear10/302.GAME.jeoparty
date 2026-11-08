@@ -22,7 +22,9 @@ Doubles, and Final Jeopardy. The original 20 single-round boards remain as an of
 - Reopens buzzing after an incorrect response while locking out that player for the clue
 - Supports host-assigned Daily Double contestants and wagers
 - Runs private Final Jeopardy wagers, written responses, and contestant self-judging
-- Restores host and player sessions after Wi-Fi interruptions and server restarts
+- Offers full episodes or quick games: any 15 clues from the first board, then Final Jeopardy
+- Lets the host undo the latest scoring decision or pass hosting to another connected player
+- Restores host and player sessions after interruptions, closed tabs, and server restarts
 - Keeps the last 100 completed games in each browser, with dates, final scores, and replay for boards still in the archive
 - Includes thousands of complete archived games spanning decades of Jeopardy
 - Filters the archive by broadcast year and supports room-scoped custom boards
@@ -63,11 +65,13 @@ PORT=8080 npm start
 
 1. Open the server address and select **Create room**, choose an episode directly, or select **Custom board**.
 2. To play too, enter your name under **Playing too?** and select **Join as player**.
-3. Share the player link or five-character room code, choose a board, and select **Start game** once a player has joined.
+3. Share the player link or five-character room code, choose a board and **Game length**, and select **Start game** once a player has joined.
 4. In a game where the creator plays, the player who answers correctly picks next. A dedicated host controls clue selection otherwise.
-5. Use **Final →** when you are ready to finish and at least one player has a positive score.
+5. Complete each board and use **Double Jeopardy →**, then **Final Jeopardy →**. Quick games go straight to Final after any 15 clues; if nobody has a positive score, show **Final standings** instead. Single-round fallback and custom boards allow **Final →** once a player has a positive score.
 
 The host can adjust scores manually, reset buzzers before an answer check starts, show an unclaimed answer on contestant screens, close clues, remove players, reset the board, or return to the game library.
+
+**Undo last score** restores the latest contestant scoring decision and its private answer check. It is available until the next successful room action, including someone joining or disconnecting. **Pass hosting** gives room controls to a connected player without changing scores or progress. A host who is playing stays as a contestant; a dedicated host leaves the room.
 
 ### Answer privacy
 
@@ -94,6 +98,8 @@ Player laptop ┘                     │
 The server validates identity, active clue, buzz position, and score transitions before broadcasting a role-specific state update. Only the active contestant receives a private clue answer. Final Jeopardy wagers and written responses remain private to their owners; the dedicated host receives progress status.
 
 Room changes are saved before the server confirms them. Restarting restores room codes, scores, board progress, wagers, and responses; players reconnect with their existing tab credentials. A fully disconnected room expires after 12 hours. The selected episode is saved with the room so archive updates cannot change a game already in progress.
+
+After closing a tab, open the site in the same browser and select **Continue** under **Continue a game**. The browser saves up to 12 recent seat credentials, which expire after 12 hours without an update. Continuing moves that seat from any other open tab; opening a new tab alone does not. No account is needed. **Forget**, leaving the room, or clearing browser site data removes that saved seat. If browser storage is blocked, closed-tab recovery is unavailable.
 
 Past games are saved on each participating browser when it receives the final standings. Results remain after leaving a room, but do not sync across devices and are removed when browser site data is cleared. A returning player can recover missed results while the room still exists; closing the room removes that server copy. History stores player names and scores, not credentials or private answers.
 
@@ -178,6 +184,7 @@ See the [changelog](CHANGELOG.md) for release history.
 | `data/games/*.json` | The original 20-game fallback bank |
 | `index.html` | Host and player application shell |
 | `app.js` | Synchronized host/player rendering and controls |
+| `room-sessions.js` | Same-browser saved seats and explicit rejoining |
 | `style.css` | Responsive lobby, board, buzzer, and Final Jeopardy design |
 | `ui.css` | Lobby, board, clue, and scoreboard styling |
 | `test/` | Unit and multi-client integration tests |

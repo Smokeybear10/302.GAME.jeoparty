@@ -63,6 +63,7 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console, 
   }
   app.get(['/', '/index.html'], (_request, response) => response.sendFile(path.join(ROOT, 'index.html')));
   app.get('/app.js', (_request, response) => response.sendFile(path.join(ROOT, 'app.js')));
+  app.get('/room-sessions.js', (_request, response) => response.sendFile(path.join(ROOT, 'room-sessions.js')));
   app.get('/style.css', (_request, response) => response.sendFile(path.join(ROOT, 'style.css')));
   app.get('/ui.css', (_request, response) => response.sendFile(path.join(ROOT, 'ui.css')));
   app.get('/site-header.css', (_request, response) => response.sendFile(path.join(ROOT, 'site-header.css')));
@@ -185,7 +186,7 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console, 
 
     registerMutation(socket, 'host:join-contestants', (payload) => rooms.joinHostAsPlayer(socket.id, payload));
     registerMutation(socket, 'host:leave-contestants', () => rooms.leaveHostAsPlayer(socket.id));
-    registerMutation(socket, 'host:start-game', ({ gameId }) => rooms.startGame(socket.id, gameId));
+    registerMutation(socket, 'host:start-game', ({ gameId, mode }) => rooms.startGame(socket.id, gameId, { mode }));
     registerMutation(socket, 'host:create-custom-game', ({ game }) => rooms.createCustomGame(socket.id, game));
     registerMutation(socket, 'host:open-clue', (payload) => rooms.openClue(socket.id, payload));
     registerMutation(socket, 'host:set-daily-double', (payload) => rooms.setDailyDouble(socket.id, payload));
@@ -194,6 +195,7 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console, 
     registerMutation(socket, 'host:skip-clue', () => rooms.skipClue(socket.id));
     registerMutation(socket, 'host:cancel-clue', () => rooms.cancelClue(socket.id));
     registerMutation(socket, 'host:adjust-score', (payload) => rooms.adjustScore(socket.id, payload));
+    registerMutation(socket, 'host:undo-score', (payload) => rooms.undoScore(socket.id, payload));
     registerMutation(socket, 'host:reset-game', () => rooms.resetGame(socket.id));
     registerMutation(socket, 'host:return-lobby', () => rooms.returnToLobby(socket.id));
     registerMutation(socket, 'host:start-final', () => rooms.startFinal(socket.id));
@@ -211,6 +213,30 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console, 
     registerMutation(socket, 'player:final-wager', ({ wager }) => rooms.submitFinalWager(socket.id, wager));
     registerMutation(socket, 'player:final-response', ({ response }) => rooms.submitFinalResponse(socket.id, response));
     registerMutation(socket, 'player:self-score-final', (payload) => rooms.selfScoreFinal(socket.id, payload));
+
+    socket.on('host:transfer-host', async (payload = {}, acknowledge) => {
+      try {
+        await mutateAndSave(() => rooms.transferHost(socket.id, payload), { afterSave: async (result) => {
+          const formerHost = io.sockets.sockets.get(result.formerHostSocketId);
+          const nextHost = io.sockets.sockets.get(result.newHostSocketId);
+          if (!result.formerHostSession) await formerHost?.leave(result.code);
+          formerHost?.emit('room:session', {
+            session: result.formerHostSession,
+            state: result.formerHostSession ? stateForSocket(formerHost) : null,
+            message: result.formerHostSession ? 'Hosting passed. You are still playing.' : 'Hosting passed. The game is continuing with its new host.',
+          });
+          if (nextHost) nextHost.emit('room:session', {
+            session: result.newHostSession,
+            state: stateForSocket(nextHost),
+            message: 'You are now hosting. Your score and place in the game are unchanged.',
+          });
+          await broadcastRoom(result.code);
+          if (typeof acknowledge === 'function') acknowledge({ ok: true });
+        } });
+      } catch (error) {
+        sendError(socket, error, acknowledge);
+      }
+    });
 
     socket.on('host:remove-player', async (payload = {}, acknowledge) => {
       try {
