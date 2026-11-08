@@ -1,7 +1,7 @@
 'use strict';
 
 const RoomSessions = (() => {
-  const STORAGE_KEY = 'jeoparty_saved_rooms_v1';
+  const STORAGE_PREFIX = 'jeoparty_saved_seat_v2:';
   const MAX_SESSIONS = 12;
   const EXPIRES_AFTER = 12 * 60 * 60 * 1000;
   const validCode = (code) => typeof code === 'string' && /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{5}$/.test(code);
@@ -40,10 +40,9 @@ const RoomSessions = (() => {
 
   function parse(raw) {
     try {
-      const value = JSON.parse(raw);
-      return value?.version === 1 && Array.isArray(value.sessions) ? value.sessions : [];
+      return JSON.parse(raw);
     } catch {
-      return [];
+      return null;
     }
   }
 
@@ -51,30 +50,38 @@ const RoomSessions = (() => {
     let memory = [];
     let persistent = true;
     const pending = new Map();
-    const forgotten = new Set();
-    const forgottenRooms = new Set();
+
+    function keys() {
+      const length = storage.length;
+      if (!Number.isInteger(length) || length < 0) throw new Error('Browser storage is unavailable.');
+      return Array.from({ length }, (_, index) => storage.key(index))
+        .filter((key) => typeof key === 'string' && key.startsWith(STORAGE_PREFIX));
+    }
 
     function read() {
       let stored;
       try {
-        stored = parse(storage.getItem(STORAGE_KEY));
+        stored = keys().flatMap((key) => {
+          const session = normalize(parse(storage.getItem(key)), now());
+          return session && key === STORAGE_PREFIX + identity(session) ? [session] : [];
+        });
       } catch {
         persistent = false;
         stored = memory;
       }
-      const retained = merge([stored], now()).filter((session) => !forgotten.has(identity(session)) && !forgottenRooms.has(session.code));
-      memory = merge([retained, [...pending.values()]], now());
+      const retained = stored.filter((session) => !pending.has(identity(session)));
+      memory = merge([retained, [...pending.values()].filter(Boolean)], now());
       return memory.map((session) => ({ ...session }));
     }
 
-    function write(sessions) {
-      memory = merge([sessions], now());
+    function flush() {
       try {
-        storage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, sessions: memory }));
+        for (const [key, session] of pending) {
+          if (session) storage.setItem(STORAGE_PREFIX + key, JSON.stringify(session));
+          else storage.removeItem(STORAGE_PREFIX + key);
+          pending.delete(key);
+        }
         persistent = true;
-        pending.clear();
-        forgotten.clear();
-        forgottenRooms.clear();
       } catch {
         persistent = false;
       }
@@ -89,26 +96,36 @@ const RoomSessions = (() => {
         if (!session) return null;
         const current = read();
         pending.set(identity(session), session);
-        forgotten.delete(identity(session));
-        write(merge([current, [session]], now()));
+        memory = merge([current, [session]], now());
+        flush();
         return { ...session };
       },
       forget(session) {
         if (!validCode(session?.code) || !validToken(session?.token)) return;
         const current = read();
         const key = identity(session);
-        pending.delete(key);
-        forgotten.add(key);
-        write(current.filter((candidate) => identity(candidate) !== key));
+        pending.set(key, null);
+        memory = current.filter((candidate) => identity(candidate) !== key);
+        flush();
       },
       forgetRoom(code) {
         if (!validCode(code)) return;
         const current = read();
-        for (const [key, session] of pending) {
-          if (session.code === code) pending.delete(key);
+        for (const key of pending.keys()) {
+          if (key.startsWith(`${code}:`)) pending.set(key, null);
         }
-        forgottenRooms.add(code);
-        write(current.filter((session) => session.code !== code));
+        for (const session of current) {
+          if (session.code === code) pending.set(identity(session), null);
+        }
+        try {
+          for (const key of keys()) {
+            if (key.startsWith(`${STORAGE_PREFIX}${code}:`)) pending.set(key.slice(STORAGE_PREFIX.length), null);
+          }
+        } catch {
+          persistent = false;
+        }
+        memory = current.filter((session) => session.code !== code);
+        flush();
       },
     };
   }
