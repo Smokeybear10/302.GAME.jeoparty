@@ -62,7 +62,9 @@ function storage() {
   };
 }
 
-function startClient(fetchResponse = () => new Promise(() => {}), { connectImmediately = true, search = '' } = {}) {
+function startClient(fetchResponse = () => new Promise(() => {}), {
+  connectImmediately = true, search = '', localStore = storage(), sessionStore = storage(),
+} = {}) {
   const nodes = new Map();
   const operations = [];
   const scrollPositions = [];
@@ -88,12 +90,13 @@ function startClient(fetchResponse = () => new Promise(() => {}), { connectImmed
   const context = vm.createContext({
     document,
     window: {
+      ...eventTarget(),
       location: { origin: 'http://127.0.0.1:3000', hostname: '127.0.0.1', search },
       scrollTo: (x, y) => scrollPositions.push([x, y]),
     },
     io: () => socket,
-    localStorage: storage(),
-    sessionStorage: storage(),
+    localStorage: localStore,
+    sessionStorage: sessionStore,
     URLSearchParams,
     AbortSignal,
     CSS: { escape: (value) => value },
@@ -108,6 +111,353 @@ function startClient(fetchResponse = () => new Promise(() => {}), { connectImmed
 }
 
 const flushAsync = () => new Promise((resolve) => setImmediate(resolve));
+
+function completedResult(overrides = {}) {
+  return {
+    id: 'g_0123456789ab', gameId: 'sample-board', title: 'Test episode', custom: false,
+    completedAt: 1794171600000, revision: 1,
+    players: [
+      { id: 'p_111111111111', name: 'Jordan', score: 1200 },
+      { id: 'p_222222222222', name: 'Taylor', score: -200 },
+    ],
+    ...overrides,
+  };
+}
+
+test('finished games survive room closure and a new browser session without retaining credentials', () => {
+  const localStore = storage();
+  const result = completedResult({ token: 'do-not-save', response: 'private response' });
+  const first = startClient(undefined, { localStore });
+  first.evaluate(`rememberCompletedGames({ completedGames: ${JSON.stringify([result])} }); clearSession(); roomState = null; render();`);
+  const second = startClient(undefined, { localStore });
+  const html = second.node('#history-list').innerHTML;
+  assert.match(html, /Test episode/);
+  assert.match(html, /Jordan won/);
+  assert.match(html, /\$1,200/);
+  assert.match(html, /-\$200/);
+  assert.equal(second.node('#history-count').textContent, '1');
+  const saved = localStore.getItem('jeoparty_game_history_v1');
+  assert.doesNotMatch(saved, /do-not-save|private response|token|response/);
+  assert.equal(second.evaluate('savedSession()'), null);
+});
+
+test('repeated results deduplicate by play, and the same episode can have separate games', () => {
+  const client = startClient();
+  const first = completedResult();
+  const replay = completedResult({ id: 'g_abcdef012345', completedAt: first.completedAt + 1000 });
+  client.evaluate(`rememberCompletedGames({ completedGames: ${JSON.stringify([first, first, replay])} }); renderGameHistory();`);
+  assert.equal(client.node('#history-count').textContent, '2');
+  assert.equal(client.evaluate('readGameHistory()[0].id'), replay.id);
+});
+
+test('two tabs merge histories and an older result cannot overwrite a corrected score', () => {
+  const localStore = storage();
+  const first = startClient(undefined, { localStore });
+  const second = startClient(undefined, { localStore });
+  const original = completedResult();
+  const correction = completedResult({ revision: 2, players: [{ id: 'p_111111111111', name: 'Jordan', score: 1600 }] });
+  first.evaluate(`rememberCompletedGames({ completedGames: ${JSON.stringify([original])} });`);
+  second.evaluate(`rememberCompletedGames({ completedGames: ${JSON.stringify([correction])} });`);
+  first.evaluate(`rememberCompletedGames({ completedGames: ${JSON.stringify([original, completedResult({ id: 'g_abcdef012345' })])} });`);
+  const games = JSON.parse(localStore.getItem('jeoparty_game_history_v1')).games;
+  assert.equal(games.length, 2);
+  assert.equal(games.find((game) => game.id === original.id).players[0].score, 1600);
+  second.evaluate("window.dispatch('storage', { key: HISTORY_KEY });");
+  assert.equal(second.node('#history-count').textContent, '2');
+});
+
+test('invalid saved records are ignored and rendered player names cannot inject markup', () => {
+  const localStore = storage();
+  const hostile = completedResult({ title: '<img src=x onerror=x>', players: [{ id: 'p_111111111111', name: '<svg onload=x>', score: 100 }] });
+  localStore.setItem('jeoparty_game_history_v1', JSON.stringify({ version: 1, games: [
+    null, {}, completedResult({ completedAt: 99999999999999999 }), completedResult({ players: [{ name: 'Missing id', score: 10 }] }), hostile,
+  ] }));
+  const client = startClient(undefined, { localStore });
+  assert.equal(client.node('#history-count').textContent, '1');
+  assert.match(client.node('#history-list').innerHTML, /&lt;img src=x onerror=x&gt;/);
+  assert.match(client.node('#history-list').innerHTML, /&lt;svg onload=x&gt;/);
+  assert.doesNotMatch(client.node('#history-list').innerHTML, /<img|<svg/);
+});
+
+test('simultaneous tab writes converge by merging the storage event with the latest history', () => {
+  const localStore = storage();
+  const first = completedResult();
+  const second = completedResult({ id: 'g_abcdef012345' });
+  const client = startClient(undefined, { localStore });
+  client.evaluate(`rememberCompletedGames({ completedGames: ${JSON.stringify([second])} });`);
+  const earlierWrite = JSON.stringify({ version: 1, games: [first] });
+  client.evaluate(`window.dispatch('storage', { key: HISTORY_KEY, newValue: ${JSON.stringify(earlierWrite)} });`);
+  assert.equal(JSON.parse(localStore.getItem('jeoparty_game_history_v1')).games.length, 2);
+  localStore.removeItem('jeoparty_game_history_v1');
+  client.evaluate("window.dispatch('storage', { key: null, newValue: null });");
+  assert.equal(client.node('#history-count').textContent, '0');
+});
+
+test('malformed stored history does not prevent startup or saving a new result', () => {
+  const localStore = storage();
+  localStore.setItem('jeoparty_game_history_v1', '{broken');
+  const client = startClient(undefined, { localStore });
+  client.evaluate(`rememberCompletedGames({ completedGames: ${JSON.stringify([completedResult()])} }); renderGameHistory();`);
+  assert.equal(JSON.parse(localStore.getItem('jeoparty_game_history_v1')).games.length, 1);
+  assert.equal(client.evaluate('historyStorageUnavailable'), false);
+});
+
+test('unavailable or full storage retains history for this page and reports that it cannot be saved', () => {
+  for (const localStore of [blockedStorage(), { ...storage(), setItem() { throw new Error('Quota exceeded'); } }]) {
+    const client = startClient(undefined, { localStore });
+    client.evaluate(`rememberCompletedGames({ completedGames: ${JSON.stringify([completedResult()])} }); renderGameHistory();`);
+    assert.equal(client.node('#history-count').textContent, '1');
+    assert.equal(client.evaluate('historyStorageUnavailable'), true);
+    assert.match(client.node('#history-note').textContent, /storage is unavailable/);
+  }
+});
+
+test('past games keep ties and solo scores without inventing a multiplayer win', () => {
+  const client = startClient();
+  const tie = completedResult({ players: [
+    { id: 'p_111111111111', name: 'Jordan', score: -200 },
+    { id: 'p_222222222222', name: 'Taylor', score: -200 },
+  ] });
+  const solo = completedResult({ id: 'g_abcdef012345', players: [{ id: 'p_111111111111', name: 'Sam', score: 800 }] });
+  client.evaluate(`rememberCompletedGames({ completedGames: ${JSON.stringify([tie, solo])} }); renderGameHistory();`);
+  assert.match(client.node('#history-list').innerHTML, /Tie · Jordan, Taylor/);
+  assert.match(client.node('#history-list').innerHTML, /Solo game/);
+  assert.doesNotMatch(client.node('#history-list').innerHTML, /Sam won/);
+});
+
+test('history replay only creates a room for a board still available in the loaded archive', async () => {
+  const client = startClient();
+  client.evaluate(`rememberCompletedGames({ completedGames: ${JSON.stringify([completedResult()])} }); renderGameHistory();`);
+  assert.doesNotMatch(client.node('#history-list').innerHTML, /data-replay-game-id/);
+  client.evaluate("publicGameCatalog = [{ id: 'sample-board' }]; catalogStatus = 'ready'; renderGameHistory(); var replayedBoard; createRoom = async (id) => { replayedBoard = id; };");
+  assert.match(client.node('#history-list').innerHTML, /data-replay-game-id="sample-board"/);
+  client.node('#history-list').dispatch('click', { target: { closest: () => ({ disabled: false, dataset: { replayGameId: 'sample-board' } }) } });
+  await flushAsync();
+  assert.equal(client.evaluate('replayedBoard'), 'sample-board');
+  client.evaluate("replayedBoard = null; publicGameCatalog = []; renderGameHistory();");
+  client.node('#history-list').dispatch('click', { target: { closest: () => ({ disabled: false, dataset: { replayGameId: 'sample-board' } }) } });
+  assert.equal(client.evaluate('replayedBoard'), null);
+  assert.match(client.node('#history-list').innerHTML, /no longer in the archive/);
+});
+
+test('custom game results remain readable without retaining their private boards', () => {
+  const client = startClient();
+  const custom = completedResult({ custom: true });
+  client.evaluate(`rememberCompletedGames({ completedGames: ${JSON.stringify([custom])} }); publicGameCatalog = [{ id: 'sample-board' }]; renderGameHistory();`);
+  assert.match(client.node('#history-list').innerHTML, /Custom board/);
+  assert.doesNotMatch(client.node('#history-list').innerHTML, /data-replay-game-id/);
+});
+
+test('history retains the newest 100 results and remains readable while offline', () => {
+  const client = startClient(undefined, { connectImmediately: false });
+  const games = Array.from({ length: 105 }, (_, index) => completedResult({ id: `g_${index.toString(16).padStart(12, '0')}`, completedAt: index }));
+  client.evaluate(`rememberCompletedGames({ completedGames: ${JSON.stringify(games)} }); renderGameHistory();`);
+  assert.equal(client.node('#history-count').textContent, '100');
+  assert.equal(client.evaluate('readGameHistory().at(-1).completedAt'), 5);
+  assert.equal(client.evaluate('readGameHistory()[0].completedAt'), 104);
+});
+
+function blockedStorage() {
+  return {
+    getItem() { throw new Error('Storage denied'); },
+    setItem() { throw new Error('Storage denied'); },
+    removeItem() { throw new Error('Storage denied'); },
+  };
+}
+
+test('blocked browser storage does not prevent startup or joining a room', async () => {
+  const client = startClient(undefined, { localStore: blockedStorage(), sessionStore: blockedStorage() });
+  assert.deepEqual(client.operations, ['connect', '/api/games', '/api/network']);
+  assert.equal(client.node('#join-room-button').disabled, false);
+
+  const games = loadGames();
+  const manager = new RoomManager({ games });
+  const host = manager.createRoom('creator');
+  const session = manager.joinRoom('player', { code: host.code, name: 'Jordan' });
+  const response = { session, state: manager.stateFor('player', []) };
+  client.evaluate(`
+    let notices = [];
+    showToast = (message) => notices.push(message);
+    request = async () => (${JSON.stringify(response)});
+  `);
+  await client.evaluate(`joinRoom({ code: { value: '${host.code}' }, name: { value: 'Jordan' } })`);
+  assert.equal(client.node('#landing-screen').classList.contains('hidden'), true);
+  assert.match(client.node('#room-content').innerHTML, /Waiting for the game to start/);
+  assert.equal(client.evaluate('savedSession().token'), session.token);
+  assert.equal(client.evaluate('savedName()'), 'Jordan');
+  assert.equal(client.evaluate('notices.length'), 1);
+  assert.match(client.evaluate('notices[0]'), /Keep this tab open/);
+});
+
+test('a full session store keeps room creation and same-tab reconnect working', async () => {
+  const sessionStore = storage();
+  sessionStore.setItem = () => { throw new Error('Quota exceeded'); };
+  const client = startClient(undefined, { sessionStore });
+  const games = loadGames();
+  const manager = new RoomManager({ games });
+  const session = manager.createRoom('creator');
+  const response = { session, state: manager.stateFor('creator', catalogGames(games)) };
+  client.evaluate(`
+    let notices = [];
+    let requests = [];
+    showToast = (message) => notices.push(message);
+    request = async (event, payload) => {
+      requests.push({ event, payload });
+      return ${JSON.stringify(response)};
+    };
+  `);
+  await client.evaluate('createRoom()');
+  assert.equal(client.node('#landing-screen').classList.contains('hidden'), true);
+  assert.equal(client.evaluate('savedSession().token'), session.token);
+  client.emit('disconnect');
+  client.emit('connect');
+  await flushAsync();
+  assert.equal(client.evaluate('requests.at(-1).event'), 'room:resume');
+  assert.equal(client.evaluate('requests.at(-1).payload.token'), session.token);
+  assert.equal(client.evaluate('notices.length'), 1);
+  assert.equal(client.evaluate('resuming'), false);
+});
+
+test('clearing an in-memory session does not resurrect legacy credentials when storage removal fails', () => {
+  const localStore = storage();
+  localStore.setItem('jeopardy_multiplayer_session_v1', JSON.stringify({ code: 'ABCDE', token: 'legacy-token' }));
+  localStore.removeItem = () => { throw new Error('Storage denied'); };
+  const sessionStore = storage();
+  sessionStore.removeItem = () => { throw new Error('Storage denied'); };
+  const client = startClient(undefined, { localStore, sessionStore, connectImmediately: false });
+  assert.equal(client.evaluate('savedSession().token'), 'legacy-token');
+  client.evaluate('clearSession()');
+  assert.equal(client.evaluate('savedSession()'), null);
+  assert.equal(client.evaluate('savedSession()'), null);
+});
+
+for (const operation of ['create', 'join']) {
+  test(`${operation} retries a lost acknowledgement once with the same request and saves the recovered session`, async () => {
+    const client = startClient();
+    const games = loadGames();
+    const manager = new RoomManager({ games });
+    const host = manager.createRoom('creator');
+    const session = operation === 'create' ? host : manager.joinRoom('player', { code: host.code, name: 'Jordan' });
+    const state = manager.stateFor(operation === 'create' ? 'creator' : 'player', catalogGames(games));
+    client.evaluate(`
+      let requests = [];
+      request = async (event, payload) => {
+        requests.push({ event, payload });
+        if (requests.length === 1) throw Object.assign(new Error('Timed out'), { code: 'REQUEST_TIMEOUT' });
+        return ${JSON.stringify({ session, state })};
+      };
+    `);
+    await client.evaluate(operation === 'create' ? 'createRoom()' : `joinRoom({ code: { value: '${host.code}' }, name: { value: 'Jordan' } })`);
+    assert.equal(client.evaluate('requests.length'), 2);
+    assert.equal(client.evaluate('requests[0].event'), `room:${operation}`);
+    assert.equal(client.evaluate('requests[0].payload === requests[1].payload'), true);
+    assert.equal(client.evaluate('savedSession().token'), session.token);
+    assert.equal(client.node('#landing-screen').classList.contains('hidden'), true);
+    assert.equal(client.evaluate('mutationPending'), false);
+    assert.equal(client.evaluate('joining'), false);
+  });
+}
+
+for (const code of ['REQUEST_TIMEOUT', 'NAME_TAKEN']) {
+  test(`failed join ${code === 'REQUEST_TIMEOUT' ? 'stops after one retry' : 'does not retry a definitive rejection'}`, async () => {
+    const client = startClient();
+    client.evaluate(`
+      let requestCount = 0;
+      request = async () => {
+        requestCount += 1;
+        throw Object.assign(new Error('Could not join'), { code: '${code}' });
+      };
+    `);
+    await client.evaluate("joinRoom({ code: { value: 'ABCDE' }, name: { value: 'Jordan' } })");
+    assert.equal(client.evaluate('requestCount'), code === 'REQUEST_TIMEOUT' ? 2 : 1);
+    assert.equal(client.evaluate('mutationPending'), false);
+    assert.equal(client.evaluate('joining'), false);
+    assert.equal(client.node('#join-room-button').disabled, false);
+    assert.equal(client.node('#join-error').hidden, false);
+    assert.equal(client.evaluate('savedSession()'), null);
+  });
+}
+
+test('request marks acknowledgement timeouts without retrying ordinary game mutations', async () => {
+  const client = startClient();
+  client.evaluate(`
+    let emits = 0;
+    socket.timeout = () => ({ emit(event, payload, acknowledge) {
+      emits += 1;
+      acknowledge(new Error('Lost acknowledgement'));
+    } });
+  `);
+  await assert.rejects(client.evaluate("request('host:adjust-score', { delta: 200 })"), { code: 'REQUEST_TIMEOUT' });
+  assert.equal(client.evaluate('emits'), 1);
+});
+
+function twoRoundGame() {
+  const game = structuredClone(loadGames()[0]);
+  game.doubleJeopardy = {
+    categories: game.categories.map((category, index) => ({
+      name: `Second round ${index + 1}`,
+      clues: category.clues.map((clue, clueIndex) => ({
+        ...clue, value: clue.value * 2, dailyDouble: index < 2 && clueIndex === 0,
+      })),
+    })),
+  };
+  return game;
+}
+
+test('episode preview and search include Double Jeopardy without mixing the two boards', () => {
+  const client = startClient();
+  const game = twoRoundGame();
+  const manager = new RoomManager({ games: [game] });
+  manager.createRoom('creator');
+  client.evaluate(`preferredGameId = ${JSON.stringify(game.id)}`);
+  client.emit('room:state', manager.stateFor('creator', catalogGames([game])));
+  const html = client.node('#room-content').innerHTML;
+  assert.match(html, /60 clues · 2 rounds · Final Jeopardy/);
+  assert.match(html, /Double Jeopardy<\/strong><p>Second round 1/);
+  assert.equal((html.match(/class="lobby-preview-category"/g) || []).length, 6);
+  assert.equal(client.evaluate(`filterCatalog(${JSON.stringify(catalogGames([game]))}, 'Second round 6', 'all').length`), 1);
+});
+
+test('round controls unlock after the board, submit the displayed round, and show second-round wager limits', async () => {
+  const client = startClient();
+  const game = twoRoundGame();
+  const manager = new RoomManager({ games: [game] });
+  const session = manager.createRoom('creator');
+  manager.joinRoom('player', { code: session.code, name: 'Jordan' });
+  manager.startGame('creator', game.id);
+  const render = () => client.emit('room:state', manager.stateFor('creator', []));
+  const html = () => client.node('#room-content').innerHTML;
+  render();
+  assert.match(html(), /data-action="next-round"[^>]*disabled/);
+  assert.doesNotMatch(html(), /data-action="start-final"/);
+  for (let categoryIndex = 0; categoryIndex < 6; categoryIndex += 1) {
+    for (let clueIndex = 0; clueIndex < 5; clueIndex += 1) {
+      manager.openClue('creator', { categoryIndex, clueIndex });
+      manager.skipClue('creator');
+    }
+  }
+  render();
+  assert.doesNotMatch(html().match(/<button[^>]*data-action="next-round"[^>]*>/)[0], /disabled/);
+  assert.match(html(), /Continue to Double Jeopardy/);
+  client.evaluate('request = async (event, payload) => { globalThis.lastRequest = { event, payload }; };');
+  const button = { disabled: false, dataset: { action: 'next-round', round: 'jeopardy' } };
+  client.node('#room-content').dispatch('click', { target: { closest: () => button } });
+  await flushAsync();
+  assert.equal(client.evaluate('lastRequest.event'), 'host:next-round');
+  assert.equal(client.evaluate('lastRequest.payload.expectedRound'), 'jeopardy');
+
+  const priorScrolls = client.scrollPositions.length;
+  manager.advanceRound('creator', { expectedRound: 'jeopardy' });
+  render();
+  assert.match(html(), /Double Jeopardy · 0\/30 played/);
+  assert.match(html(), /Second round 1/);
+  assert.match(html(), /data-round="double"/);
+  assert.equal(client.scrollPositions.length, priorScrolls + 1);
+  manager.openClue('creator', { categoryIndex: 0, clueIndex: 0, round: 'double' });
+  render();
+  assert.match(html(), /Wager \(max \$2,000\)/);
+  assert.match(html(), /max="2000"/);
+});
 
 test('app.js parses as a classic browser script, without a CommonJS wrapper', () => {
   assert.doesNotThrow(() => new vm.Script(clientSource, { filename: 'app.js' }));
@@ -130,6 +480,30 @@ test('connection status distinguishes first connection from reconnecting', () =>
   client.emit('disconnect');
   assert.equal(client.node('#connection-label').textContent, 'Connection lost. Reconnecting…');
   assert.equal(client.node('#join-room-button').disabled, true);
+});
+
+test('a displaced tab keeps a reload instruction and never automatically retakes the room', () => {
+  const client = startClient();
+  client.evaluate(`
+    showToast = () => {};
+    saveSession({ code: 'ABCDE', token: 'saved-host-token' });
+    let resumeRequests = 0;
+    request = async () => { resumeRequests += 1; };
+  `);
+  client.emit('room:replaced', { message: 'This room was resumed in another tab or device.' });
+  const instruction = 'Room opened in another tab. Reload this page to take control here.';
+  assert.equal(client.node('#connection-label').textContent, instruction);
+  client.emit('disconnect');
+  client.evaluate('render()');
+  assert.equal(client.node('#connection-label').textContent, instruction);
+  assert.equal(client.node('#create-room-button').disabled, true);
+  assert.equal(client.node('#create-custom-room-button').disabled, true);
+  assert.equal(client.node('#join-room-button').disabled, true);
+  assert.equal(client.evaluate('savedSession().token'), 'saved-host-token');
+  client.emit('connect');
+  assert.equal(client.evaluate('resumeRequests'), 0);
+  assert.equal(client.node('#connection-label').textContent, instruction);
+  assert.equal(client.operations.filter((operation) => operation === 'connect').length, 1);
 });
 
 test('opening an invite sanitizes and prefills its room code and presents the join screen', () => {
@@ -539,4 +913,34 @@ test('creator can enter Daily Double and Final wagers, responses, and self-judgm
   assert.doesNotMatch(render(), /data-action="finish-final" disabled/);
   manager.finishFinal('creator');
   assert.match(render(), /FINAL SCORES/);
+  assert.match(client.node('#room-content').innerHTML, /Saved to Past games/);
+  assert.equal(client.evaluate('readGameHistory()[0].players[0].score'), 600);
+  manager.returnToLobby('creator');
+  render();
+  assert.equal(client.evaluate('readGameHistory().length'), 1);
+  assert.equal(client.evaluate('readGameHistory()[0].players[0].score'), 600);
+});
+
+test('resuming after completion records the result even when the finishing broadcast was missed', async () => {
+  const client = startClient();
+  const games = loadGames();
+  const manager = new RoomManager({ games });
+  const session = manager.createRoom('host');
+  manager.joinHostAsPlayer('host', { name: 'Maya' });
+  manager.startGame('host', games[0].id);
+  const playerId = manager.stateFor('host', []).you.id;
+  manager.adjustScore('host', { playerId, delta: 1000 });
+  manager.startFinal('host');
+  manager.submitFinalWager('host', 200);
+  manager.advanceFinal('host');
+  manager.submitFinalResponse('host', 'My response');
+  manager.advanceFinal('host');
+  manager.selfScoreFinal('host', { correct: true });
+  manager.finishFinal('host');
+  manager.returnToLobby('host');
+  const state = manager.stateFor('host', catalogGames(games));
+  client.evaluate(`saveSession(${JSON.stringify(session)}); request = async () => (${JSON.stringify({ session, state })});`);
+  await client.evaluate('resumeSavedSession()');
+  assert.equal(client.evaluate('readGameHistory().length'), 1);
+  assert.equal(client.evaluate('readGameHistory()[0].players[0].score'), 1200);
 });

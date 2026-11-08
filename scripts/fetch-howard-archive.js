@@ -3,7 +3,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const zlib = require('node:zlib');
-const { gamesFromHowardArchive } = require('../lib/howard-archive');
+const { PREPARED_ARCHIVE_VERSION, gamesFromHowardArchive } = require('../lib/howard-archive');
 
 const SOURCE = 'https://raw.githubusercontent.com/howardchung/jeopardy/master/jeopardy.json.gz';
 const OUTPUT = path.join(__dirname, '..', 'data', 'archive', 'howard-jeopardy.json.gz');
@@ -23,10 +23,10 @@ async function main() {
   const temporary = `${OUTPUT}.tmp`;
   await fs.writeFile(temporary, compressed);
   await fs.rename(temporary, OUTPUT);
-  await fs.writeFile(`${PREPARED_OUTPUT}.tmp`, JSON.stringify(games));
+  await fs.writeFile(`${PREPARED_OUTPUT}.tmp`, JSON.stringify({ version: PREPARED_ARCHIVE_VERSION, games }));
   await fs.rename(`${PREPARED_OUTPUT}.tmp`, PREPARED_OUTPUT);
   console.log(`Downloaded ${episodeCount} episodes (${(compressed.length / 1e6).toFixed(1)} MB) to ${OUTPUT}`);
-  console.log(`Prepared ${games.length} playable boards for startup`);
+  console.log(`Prepared ${games.length} complete text-only games for startup`);
 }
 
 main().catch((error) => {

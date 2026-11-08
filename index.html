@@ -43,6 +43,11 @@
               <button class="button button-primary" id="create-room-button" type="button" disabled>Create room <span aria-hidden="true">+</span></button>
             </div>
           </div>
+          <details class="history-panel" id="past-games">
+            <summary><span>Past games</span><span id="history-count">0 games</span></summary>
+            <p id="history-note">Saved in this browser. Completed games appear here.</p>
+            <div class="history-list" id="history-list"></div>
+          </details>
           <div class="landing-workspace">
             <aside class="landing-join-rail">
               <section
@@ -136,7 +141,7 @@
                   </label>
                 </div>
               </div>
-              <p class="archive-instruction">Choose an episode to create a room.</p>
+              <p class="archive-instruction">Choose an episode to create a room. A text-only selection of complete episodes, with both rounds and Final Jeopardy.</p>
               <div class="public-game-table">
                 <div class="public-game-head" aria-hidden="true">
                   <span>Episode</span><span>Categories</span><span></span>

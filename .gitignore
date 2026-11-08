@@ -5,3 +5,7 @@ coverage/
 data/archive/*.gz
 data/archive/howard-playable.json
 data/archive/*.tmp
+data/rooms/
+.env
+.env.*
+!.env.example

@@ -28,7 +28,7 @@ function renderClue(clueOverrides = {}, { isConnected = true, hostConnected = tr
   };
   const context = vm.createContext({
     document: { body: node('body'), querySelector: node, querySelectorAll: () => [], addEventListener() {} },
-    window: { location: { origin: 'http://127.0.0.1:3000', hostname: '127.0.0.1', search: '' } },
+    window: { location: { origin: 'http://127.0.0.1:3000', hostname: '127.0.0.1', search: '' }, addEventListener() {} },
     io: () => ({ on() {}, connect() {} }),
     localStorage: { getItem: () => null }, sessionStorage: { getItem: () => null },
     URLSearchParams, AbortSignal, fetch: () => new Promise(() => {}),
