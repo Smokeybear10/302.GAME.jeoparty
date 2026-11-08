@@ -8,8 +8,8 @@ The public site runs on Render's free plan, so the first visit after inactivity 
 
 The game can load real historical boards from the compressed archive maintained
 by [howardchung/jeopardy](https://github.com/howardchung/jeopardy). By default it
-serves every complete playable episode, including its Daily Double and Final
-Jeopardy clues. The original 20 boards remain as an offline fallback.
+serves complete text-playable episodes with both boards, their original Daily
+Doubles, and Final Jeopardy. The original 20 single-round boards remain as an offline fallback.
 
 ## What it does
 
@@ -22,7 +22,10 @@ Jeopardy clues. The original 20 boards remain as an offline fallback.
 - Reopens buzzing after an incorrect response while locking out that player for the clue
 - Supports host-assigned Daily Double contestants and wagers
 - Runs private Final Jeopardy wagers, written responses, and contestant self-judging
-- Restores host and player sessions after an ordinary Wi-Fi interruption
+- Offers full episodes or quick games: any 15 clues from the first board, then Final Jeopardy
+- Lets the host undo the latest scoring decision or pass hosting to another connected player
+- Restores host and player sessions after interruptions, closed tabs, and server restarts
+- Keeps the last 100 completed games in each browser, with dates, final scores, and replay for boards still in the archive
 - Includes thousands of complete archived games spanning decades of Jeopardy
 - Filters the archive by broadcast year and supports room-scoped custom boards
 
@@ -62,11 +65,13 @@ PORT=8080 npm start
 
 1. Open the server address and select **Create room**, choose an episode directly, or select **Custom board**.
 2. To play too, enter your name under **Playing too?** and select **Join as player**.
-3. Share the player link or five-character room code, choose a board, and select **Start game** once a player has joined.
+3. Share the player link or five-character room code, choose a board and **Game length**, and select **Start game** once a player has joined.
 4. In a game where the creator plays, the player who answers correctly picks next. A dedicated host controls clue selection otherwise.
-5. Use **Final →** when you are ready to finish and at least one player has a positive score.
+5. Complete each board and use **Double Jeopardy →**, then **Final Jeopardy →**. Quick games go straight to Final after any 15 clues; if nobody has a positive score, show **Final standings** instead. Single-round fallback and custom boards allow **Final →** once a player has a positive score.
 
 The host can adjust scores manually, reset buzzers before an answer check starts, show an unclaimed answer on contestant screens, close clues, remove players, reset the board, or return to the game library.
+
+**Undo last score** restores the latest contestant scoring decision and its private answer check. It is available until the next successful room action, including someone joining or disconnecting. **Pass hosting** gives room controls to a connected player without changing scores or progress. A host who is playing stays as a contestant; a dedicated host leaves the room.
 
 ### Answer privacy
 
@@ -92,18 +97,24 @@ Player laptop ┘                     │
 
 The server validates identity, active clue, buzz position, and score transitions before broadcasting a role-specific state update. Only the active contestant receives a private clue answer. Final Jeopardy wagers and written responses remain private to their owners; the dedicated host receives progress status.
 
-Rooms live in memory. A fully disconnected room expires after 12 hours of inactivity, while a room with at least one connected device remains active. Stopping the Node.js process ends all rooms; scores and progress are intentionally not written to disk.
+Room changes are saved before the server confirms them. Restarting restores room codes, scores, board progress, wagers, and responses; players reconnect with their existing tab credentials. A fully disconnected room expires after 12 hours. The selected episode is saved with the room so archive updates cannot change a game already in progress.
+
+After closing a tab, open the site in the same browser and select **Continue** under **Continue a game**. The list shows up to 12 recent seats and hides entries after 12 hours without an update. Each seat is saved separately so tabs cannot overwrite each other's recovery details. Continuing moves that seat from any other open tab; opening a new tab alone does not. No account is needed. **Forget**, leaving the room, or clearing browser site data removes that saved seat. If browser storage is blocked, closed-tab recovery is unavailable.
+
+Past games are saved on each participating browser when it receives the final standings. Results remain after leaving a room, but do not sync across devices and are removed when browser site data is cleared. A returning player can recover missed results while the room still exists; closing the room removes that server copy. History stores player names and scores, not credentials or private answers.
+
+Locally, `npm start` saves to `data/rooms/saved-games.json`, which is private to the server and excluded from Git. Set `JEOPARDY_SAVE_PATH` to change that location. On Render, set the private `DATABASE_URL` environment variable to a PostgreSQL connection string. Local files on Render are temporary, so startup requires the database rather than silently using them for saves. Use the database provider's TLS connection string and run one server instance; conflicting writers are rejected to prevent overwriting newer games.
 
 ## Question bank
 
 Run `npm run build` to download Howard's roughly 30 MB compressed archive and
-prepare all complete playable episodes in `data/archive/howard-playable.json`.
+prepare complete two-round episodes in `data/archive/howard-playable.json`.
 Both generated files are gitignored. The server loads the prepared bank at
-startup; an older local installation with only the compressed archive still works.
+startup; old caches are rebuilt from the compressed archive. Episodes with identifiable missing-media references are excluded. This uses clue and category text, so it is not an exhaustive review of every clue.
 
 Render runs the syntax checks and test suite before each build, then starts one
-Node.js instance with `npm start` and checks `/health`. Deploys and server restarts
-end current multiplayer rooms.
+Node.js instance with `npm start` and checks `/health`. Configure `DATABASE_URL`
+before deploying this version so multiplayer rooms survive restarts.
 
 ```bash
 JEOPARDY_ARCHIVE_LIMIT=1000 npm start  # newest 1,000 playable episodes
@@ -113,12 +124,13 @@ JEOPARDY_ARCHIVE_LIMIT=0 npm start     # full playable archive (the default)
 If the archive file is absent, the server loads the original bank in
 [`data/games`](data/games).
 
-Archived boards contain text only. Some clues refer to images or audio from the
-original broadcast that are not included; use **Skip clue** for those questions.
+Archived boards contain text only. If a media-dependent clue slips through the
+filter, use **Skip clue**; skipping never changes scores.
 
-Each game requires exactly six categories, five clues per category, one Daily
-Double, and one Final Jeopardy clue. This abbreviated example shows the object
-shape:
+The first board requires six categories with five clues each and one Daily Double.
+The optional `doubleJeopardy.categories` board has the same shape, values from
+$400 to $2,000, and two Daily Doubles. Every game includes Final Jeopardy.
+This abbreviated example shows a single-round game's shape:
 
 ```json
 {
@@ -172,6 +184,7 @@ See the [changelog](CHANGELOG.md) for release history.
 | `data/games/*.json` | The original 20-game fallback bank |
 | `index.html` | Host and player application shell |
 | `app.js` | Synchronized host/player rendering and controls |
+| `room-sessions.js` | Same-browser saved seats and explicit rejoining |
 | `style.css` | Responsive lobby, board, buzzer, and Final Jeopardy design |
 | `ui.css` | Lobby, board, clue, and scoreboard styling |
 | `test/` | Unit and multi-client integration tests |

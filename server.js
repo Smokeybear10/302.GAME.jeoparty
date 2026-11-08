@@ -7,10 +7,11 @@ const express = require('express');
 const { Server } = require('socket.io');
 const { catalogGames, loadPreferredGames } = require('./lib/game-store');
 const { RoomError, RoomManager } = require('./lib/room-manager');
+const { configuredRoomStore } = require('./lib/room-store');
 
 const ROOT = __dirname;
 
-function createJeopardyServer({ games = loadPreferredGames(), logger = console } = {}) {
+function createJeopardyServer({ games = loadPreferredGames(), logger = console, roomStore = null } = {}) {
   const app = express();
   const httpServer = http.createServer(app);
   const io = new Server(httpServer, {
@@ -19,10 +20,37 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console }
   });
   const gameCatalog = catalogGames(games);
   const rooms = new RoomManager({ games });
+  let mutationQueue = Promise.resolve();
+  let stopping = false;
+  let storageFailure = null;
+
+  function mutateAndSave(mutate, { rollback = true, afterSave, onFailure } = {}) {
+    if (stopping) return Promise.reject(new RoomError('SERVER_RESTARTING', 'The server is restarting. Reconnect in a moment.'));
+    const operation = mutationQueue.then(async () => {
+      if (storageFailure) throw storageFailure;
+      const before = roomStore ? rooms.exportSnapshot() : null;
+      let result;
+      try {
+        result = mutate();
+        if (roomStore) await roomStore.save(rooms.exportSnapshot());
+      } catch (error) {
+        if (before && rollback) rooms.restoreSnapshot(before, { restoreConnections: true, expire: false });
+        if (error.code === 'STORE_CONFLICT' || error.code === 'STORE_UNCERTAIN') {
+          storageFailure = new RoomError('SERVER_RESTARTING', 'Saved games need to be reloaded. Reconnect after the server restarts.');
+        }
+        if (onFailure) await onFailure(error);
+        throw error;
+      }
+      if (afterSave) await afterSave(result);
+      return result;
+    });
+    mutationQueue = operation.catch(() => {});
+    return operation;
+  }
 
   app.disable('x-powered-by');
   app.get('/health', (_request, response) => {
-    response.json({ ok: true, games: games.length, rooms: rooms.rooms.size });
+    response.status(storageFailure ? 503 : 200).json({ ok: !storageFailure, games: games.length, rooms: rooms.rooms.size });
   });
   app.get('/api/network', (request, response) => {
     response.json({ urls: localNetworkUrls(request.socket.localPort) });
@@ -35,6 +63,7 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console }
   }
   app.get(['/', '/index.html'], (_request, response) => response.sendFile(path.join(ROOT, 'index.html')));
   app.get('/app.js', (_request, response) => response.sendFile(path.join(ROOT, 'app.js')));
+  app.get('/room-sessions.js', (_request, response) => response.sendFile(path.join(ROOT, 'room-sessions.js')));
   app.get('/style.css', (_request, response) => response.sendFile(path.join(ROOT, 'style.css')));
   app.get('/ui.css', (_request, response) => response.sendFile(path.join(ROOT, 'ui.css')));
   app.get('/site-header.css', (_request, response) => response.sendFile(path.join(ROOT, 'site-header.css')));
@@ -69,10 +98,11 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console }
   function registerMutation(socket, eventName, mutate) {
     socket.on(eventName, async (payload = {}, acknowledge) => {
       try {
-        const result = mutate(payload);
-        const code = typeof result === 'string' ? result : result?.code;
-        await broadcastRoom(code);
-        if (typeof acknowledge === 'function') acknowledge({ ok: true, result });
+        await mutateAndSave(() => mutate(payload), { afterSave: async (result) => {
+          const code = typeof result === 'string' ? result : result?.code;
+          await broadcastRoom(code);
+          if (typeof acknowledge === 'function') acknowledge({ ok: true, result });
+        } });
       } catch (error) {
         sendError(socket, error, acknowledge);
       }
@@ -82,10 +112,11 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console }
   io.on('connection', (socket) => {
     socket.on('room:create', async (_payload = {}, acknowledge) => {
       try {
-        const session = rooms.createRoom(socket.id);
-        await socket.join(session.code);
-        const state = stateForSocket(socket);
-        acknowledge?.({ ok: true, session, state });
+        await mutateAndSave(() => rooms.createRoom(socket.id), { afterSave: async (session) => {
+          await socket.join(session.code);
+          const state = stateForSocket(socket);
+          acknowledge?.({ ok: true, session, state });
+        } });
       } catch (error) {
         sendError(socket, error, acknowledge);
       }
@@ -93,11 +124,12 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console }
 
     socket.on('room:join', async (payload = {}, acknowledge) => {
       try {
-        const session = rooms.joinRoom(socket.id, payload);
-        await socket.join(session.code);
-        const state = stateForSocket(socket);
-        acknowledge?.({ ok: true, session, state });
-        await broadcastRoom(session.code);
+        await mutateAndSave(() => rooms.joinRoom(socket.id, payload), { afterSave: async (session) => {
+          await socket.join(session.code);
+          const state = stateForSocket(socket);
+          acknowledge?.({ ok: true, session, state });
+          await broadcastRoom(session.code);
+        } });
       } catch (error) {
         sendError(socket, error, acknowledge);
       }
@@ -105,18 +137,19 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console }
 
     socket.on('room:resume', async (payload = {}, acknowledge) => {
       try {
-        const resumedSession = rooms.resumeRoom(socket.id, payload);
-        const { replacedSocketId, ...session } = resumedSession;
-        if (replacedSocketId && replacedSocketId !== socket.id) {
-          const replacedSocket = io.sockets.sockets.get(replacedSocketId);
-          replacedSocket?.emit('room:replaced', { message: 'This room was resumed in another tab or device.' });
-          await replacedSocket?.leave(session.code);
-          replacedSocket?.disconnect(true);
-        }
-        await socket.join(session.code);
-        const state = stateForSocket(socket);
-        acknowledge?.({ ok: true, session, state });
-        await broadcastRoom(session.code);
+        await mutateAndSave(() => rooms.resumeRoom(socket.id, payload), { afterSave: async (resumedSession) => {
+          const { replacedSocketId, ...session } = resumedSession;
+          if (replacedSocketId && replacedSocketId !== socket.id) {
+            const replacedSocket = io.sockets.sockets.get(replacedSocketId);
+            replacedSocket?.emit('room:replaced', { message: 'This room was resumed in another tab or device.' });
+            await replacedSocket?.leave(session.code);
+            replacedSocket?.disconnect(true);
+          }
+          await socket.join(session.code);
+          const state = stateForSocket(socket);
+          acknowledge?.({ ok: true, session, state });
+          await broadcastRoom(session.code);
+        } });
       } catch (error) {
         sendError(socket, error, acknowledge);
       }
@@ -124,15 +157,16 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console }
 
     socket.on('room:leave', async (_payload = {}, acknowledge) => {
       try {
-        const result = rooms.leaveRoom(socket.id);
-        if (result.closed) {
-          io.to(result.code).emit('room:closed', { message: 'The host ended this room.' });
-          io.in(result.code).socketsLeave(result.code);
-        } else {
-          await socket.leave(result.code);
-          await broadcastRoom(result.code);
-        }
-        acknowledge?.({ ok: true });
+        await mutateAndSave(() => rooms.leaveRoom(socket.id), { afterSave: async (result) => {
+          if (result.closed) {
+            io.to(result.code).emit('room:closed', { message: 'The host ended this room.' });
+            io.in(result.code).socketsLeave(result.code);
+          } else {
+            await socket.leave(result.code);
+            await broadcastRoom(result.code);
+          }
+          acknowledge?.({ ok: true });
+        } });
       } catch (error) {
         sendError(socket, error, acknowledge);
       }
@@ -140,10 +174,11 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console }
 
     socket.on('room:close', async (_payload = {}, acknowledge) => {
       try {
-        const result = rooms.closeRoom(socket.id);
-        io.to(result.code).emit('room:closed', { message: 'The host ended this room.' });
-        io.in(result.code).socketsLeave(result.code);
-        acknowledge?.({ ok: true });
+        await mutateAndSave(() => rooms.closeRoom(socket.id), { afterSave: async (result) => {
+          io.to(result.code).emit('room:closed', { message: 'The host ended this room.' });
+          io.in(result.code).socketsLeave(result.code);
+          acknowledge?.({ ok: true });
+        } });
       } catch (error) {
         sendError(socket, error, acknowledge);
       }
@@ -151,7 +186,7 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console }
 
     registerMutation(socket, 'host:join-contestants', (payload) => rooms.joinHostAsPlayer(socket.id, payload));
     registerMutation(socket, 'host:leave-contestants', () => rooms.leaveHostAsPlayer(socket.id));
-    registerMutation(socket, 'host:start-game', ({ gameId }) => rooms.startGame(socket.id, gameId));
+    registerMutation(socket, 'host:start-game', ({ gameId, mode }) => rooms.startGame(socket.id, gameId, { mode }));
     registerMutation(socket, 'host:create-custom-game', ({ game }) => rooms.createCustomGame(socket.id, game));
     registerMutation(socket, 'host:open-clue', (payload) => rooms.openClue(socket.id, payload));
     registerMutation(socket, 'host:set-daily-double', (payload) => rooms.setDailyDouble(socket.id, payload));
@@ -160,9 +195,11 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console }
     registerMutation(socket, 'host:skip-clue', () => rooms.skipClue(socket.id));
     registerMutation(socket, 'host:cancel-clue', () => rooms.cancelClue(socket.id));
     registerMutation(socket, 'host:adjust-score', (payload) => rooms.adjustScore(socket.id, payload));
+    registerMutation(socket, 'host:undo-score', (payload) => rooms.undoScore(socket.id, payload));
     registerMutation(socket, 'host:reset-game', () => rooms.resetGame(socket.id));
     registerMutation(socket, 'host:return-lobby', () => rooms.returnToLobby(socket.id));
     registerMutation(socket, 'host:start-final', () => rooms.startFinal(socket.id));
+    registerMutation(socket, 'host:next-round', (payload) => rooms.advanceRound(socket.id, payload));
     registerMutation(socket, 'host:advance-final', ({ phase, expectedPhase, force }) => rooms.advanceFinal(socket.id, {
       expectedPhase: expectedPhase ?? phase,
       force,
@@ -177,33 +214,67 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console }
     registerMutation(socket, 'player:final-response', ({ response }) => rooms.submitFinalResponse(socket.id, response));
     registerMutation(socket, 'player:self-score-final', (payload) => rooms.selfScoreFinal(socket.id, payload));
 
-    socket.on('host:remove-player', async ({ playerId } = {}, acknowledge) => {
+    socket.on('host:transfer-host', async (payload = {}, acknowledge) => {
       try {
-        const result = rooms.removePlayer(socket.id, playerId);
-        if (result.removedSocketId) {
-          const removedSocket = io.sockets.sockets.get(result.removedSocketId);
-          removedSocket?.emit('room:removed', { message: 'The host removed you from the room.' });
-          await removedSocket?.leave(result.code);
-        }
-        await broadcastRoom(result.code);
-        acknowledge?.({ ok: true });
+        await mutateAndSave(() => rooms.transferHost(socket.id, payload), { afterSave: async (result) => {
+          const formerHost = io.sockets.sockets.get(result.formerHostSocketId);
+          const nextHost = io.sockets.sockets.get(result.newHostSocketId);
+          if (!result.formerHostSession) await formerHost?.leave(result.code);
+          formerHost?.emit('room:session', {
+            session: result.formerHostSession,
+            state: result.formerHostSession ? stateForSocket(formerHost) : null,
+            message: result.formerHostSession ? 'Hosting passed. You are still playing.' : 'Hosting passed. The game is continuing with its new host.',
+          });
+          if (nextHost) nextHost.emit('room:session', {
+            session: result.newHostSession,
+            state: stateForSocket(nextHost),
+            message: 'You are now hosting. Your score and place in the game are unchanged.',
+          });
+          await broadcastRoom(result.code);
+          if (typeof acknowledge === 'function') acknowledge({ ok: true });
+        } });
+      } catch (error) {
+        sendError(socket, error, acknowledge);
+      }
+    });
+
+    socket.on('host:remove-player', async (payload = {}, acknowledge) => {
+      try {
+        await mutateAndSave(() => rooms.removePlayer(socket.id, payload?.playerId), { afterSave: async (result) => {
+          if (result.removedSocketId) {
+            const removedSocket = io.sockets.sockets.get(result.removedSocketId);
+            removedSocket?.emit('room:removed', { message: 'The host removed you from the room.' });
+            await removedSocket?.leave(result.code);
+          }
+          await broadcastRoom(result.code);
+          acknowledge?.({ ok: true });
+        } });
       } catch (error) {
         sendError(socket, error, acknowledge);
       }
     });
 
     socket.on('disconnect', () => {
-      const code = rooms.disconnect(socket.id);
-      if (code) void broadcastRoom(code);
+      if (stopping) return;
+      let disconnectedCode;
+      void mutateAndSave(() => {
+        disconnectedCode = rooms.disconnect(socket.id);
+        return disconnectedCode;
+      }, {
+        rollback: false,
+        afterSave: (code) => code && broadcastRoom(code),
+        onFailure: () => disconnectedCode && broadcastRoom(disconnectedCode),
+      }).catch((error) => logger.error(error));
     });
   });
 
   const cleanupTimer = setInterval(() => {
-    const removedCodes = rooms.cleanup();
-    for (const code of removedCodes) {
-      io.to(code).emit('room:closed', { message: 'This room expired after a long period of inactivity.' });
-      io.in(code).socketsLeave(code);
-    }
+    void mutateAndSave(() => rooms.cleanup(), { afterSave: async (removedCodes) => {
+      for (const code of removedCodes) {
+        io.to(code).emit('room:closed', { message: 'This room expired after a long period of inactivity.' });
+        io.in(code).socketsLeave(code);
+      }
+    } }).catch((error) => logger.error(error));
   }, 30 * 60 * 1000);
   cleanupTimer.unref();
 
@@ -215,6 +286,18 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console }
     io,
     rooms,
     async start(port = 3000, host = '0.0.0.0') {
+      if (roomStore) {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const snapshot = await roomStore.load();
+          if (snapshot !== null) rooms.restoreSnapshot(snapshot);
+          try {
+            await roomStore.save(rooms.exportSnapshot());
+            break;
+          } catch (error) {
+            if (error.code !== 'STORE_CONFLICT' || attempt === 2) throw error;
+          }
+        }
+      }
       await new Promise((resolve, reject) => {
         httpServer.once('error', reject);
         httpServer.listen(port, host, () => {
@@ -225,9 +308,12 @@ function createJeopardyServer({ games = loadPreferredGames(), logger = console }
       return httpServer.address();
     },
     async stop() {
+      stopping = true;
       clearInterval(cleanupTimer);
+      await mutationQueue;
       await new Promise((resolve) => io.close(resolve));
       if (httpServer.listening) await new Promise((resolve) => httpServer.close(resolve));
+      if (roomStore) await roomStore.close();
     },
   };
 }
@@ -248,7 +334,7 @@ function localNetworkUrls(port) {
 if (require.main === module) {
   const port = Number.parseInt(process.env.PORT || '3000', 10);
   const host = process.env.HOST || '0.0.0.0';
-  const jeopardy = createJeopardyServer();
+  const jeopardy = createJeopardyServer({ roomStore: configuredRoomStore() });
   jeopardy.start(port, host).then((address) => {
     const actualPort = typeof address === 'object' ? address.port : port;
     console.log('\nJeoparty! multiplayer is live.');
@@ -258,6 +344,7 @@ if (require.main === module) {
   }).catch((error) => {
     console.error('Could not start Jeoparty!:', error.message);
     process.exitCode = 1;
+    void jeopardy.stop();
   });
 
   const shutdown = async () => {

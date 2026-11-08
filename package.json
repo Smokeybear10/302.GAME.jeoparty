@@ -10,13 +10,14 @@
     "fetch:archive": "node scripts/fetch-howard-archive.js",
     "build": "npm run fetch:archive",
     "test": "node --test",
-    "check": "node --check server.js && node --check lib/game-store.js && node --check lib/howard-archive.js && node --check scripts/fetch-howard-archive.js && node --check lib/room-manager.js && node --check app.js && node --check practice-data.js && node --check practice-state.js && node --check practice.js"
+    "check": "node --check server.js && node --check lib/game-store.js && node --check lib/howard-archive.js && node --check scripts/fetch-howard-archive.js && node --check lib/room-manager.js && node --check lib/room-store.js && node --check room-sessions.js && node --check app.js && node --check practice-data.js && node --check practice-state.js && node --check practice.js"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
     "express": "5.2.1",
+    "pg": "8.23.1",
     "socket.io": "4.8.3"
   },
   "devDependencies": {
