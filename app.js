@@ -5,9 +5,11 @@ const NAME_KEY = 'jeopardy_multiplayer_name_v1';
 const HISTORY_KEY = 'jeoparty_game_history_v1';
 const HISTORY_LIMIT = 100;
 const CATALOG_RENDER_LIMIT = 60;
+const RESUME_RETRY_DELAYS = [1000, 3000, 7000];
 
 const elements = {
   connectionLabel: document.querySelector('#connection-label'),
+  hostRecovery: document.querySelector('#host-recovery-status'),
   createCustomRoomButton: document.querySelector('#create-custom-room-button'),
   createRoomButton: document.querySelector('#create-room-button'),
   joinRoomButton: document.querySelector('#join-room-button'),
@@ -44,7 +46,12 @@ let roomState = null;
 let connected = false;
 let hasConnected = false;
 let sessionReplaced = false;
+let hostRecoveryTimer = null;
 let resuming = false;
+let resumeInFlight = false;
+let resumeAttempts = 0;
+let resumeGeneration = 0;
+let resumeRetryTimer = null;
 let mutationPending = false;
 let joining = false;
 let shouldResumeOnConnect = true;
@@ -181,6 +188,7 @@ function savedSession() {
 }
 
 function saveSession(session) {
+  if (resuming && (memorySession?.code !== session.code || memorySession?.token !== session.token)) stopSessionRestore();
   memorySession = { ...session, preferredGameId, preferredGameMode };
   roomSessions.save({
     ...memorySession,
@@ -207,6 +215,7 @@ function setPreferredGame(gameId) {
 }
 
 function clearSession() {
+  stopSessionRestore();
   if (memorySession) roomSessions.forget(memorySession);
   memorySession = null;
   try {
@@ -267,6 +276,7 @@ function completedGame(value) {
     id: value.id, gameId: value.gameId, title: value.title, custom: value.custom,
     gameMode: value.gameMode === 'quick' ? 'quick' : 'full',
     completedAt: value.completedAt, revision: value.revision,
+    ...(typeof value.resultToken === 'string' && /^[A-Za-z0-9_-]{43}$/.test(value.resultToken) ? { resultToken: value.resultToken } : {}),
     players: value.players.map(({ id, name, score }) => ({ id, name, score })),
   };
 }
@@ -275,7 +285,11 @@ function mergeGameHistory(...lists) {
   const games = new Map();
   for (const value of lists.flat()) {
     const game = completedGame(value);
-    if (game && (!games.has(game.id) || game.revision > games.get(game.id).revision)) games.set(game.id, game);
+    if (!game) continue;
+    const previous = games.get(game.id);
+    const latest = previous && previous.revision >= game.revision ? previous : game;
+    const resultToken = latest.resultToken || previous?.resultToken || game.resultToken;
+    games.set(game.id, resultToken ? { ...latest, resultToken } : latest);
   }
   return [...games.values()].sort((first, second) => second.completedAt - first.completedAt || first.id.localeCompare(second.id)).slice(0, HISTORY_LIMIT);
 }
@@ -317,7 +331,7 @@ function renderGameHistory() {
   elements.historyCount.textContent = String(games.length);
   elements.historyNote.textContent = historyStorageUnavailable
     ? 'Browser storage is unavailable. Keep this page open to retain new results.'
-    : 'Your last 100 completed games, saved in this browser. Clearing site data removes them.';
+    : 'Your last 100 games on this browser. Keep a saved results link to open it on another device.';
   const html = games.length ? games.map((game) => {
     const ranked = [...game.players].sort((first, second) => second.score - first.score);
     const leaders = ranked.filter((player) => player.score === ranked[0]?.score);
@@ -337,6 +351,7 @@ function renderGameHistory() {
           const place = ranked.findIndex((candidate) => candidate.score === player.score) + 1;
           return `<li><span class="place">${place}</span><strong class="name">${escapeHtml(player.name)}</strong><span class="score">${formatMoney(player.score)}</span></li>`;
         }).join('')}</ol>
+        ${game.resultToken ? `<a class="result-link" href="/#result=${escapeAttr(game.resultToken)}">Saved results &amp; private link</a>` : ''}
         ${available ? `<button class="button button-secondary" type="button" data-replay-game-id="${escapeAttr(game.gameId)}" data-replay-mode="${game.gameMode}" ${!connected || resuming ? 'disabled' : ''}>Play this board again</button>`
           : `<p class="history-unavailable">${game.custom ? 'Custom board' : catalogStatus === 'ready' ? 'This board is no longer in the archive.' : 'Reconnect and load the archive to play this board again.'}</p>`}
       </div>
@@ -360,15 +375,39 @@ function showToast(message, tone = 'info') {
   }, 3500);
 }
 
+function renderHostRecovery() {
+  if (hostRecoveryTimer !== null) window.clearTimeout(hostRecoveryTimer);
+  hostRecoveryTimer = null;
+  const recovery = roomState?.hostRecovery;
+  const visible = connected && !resuming && roomState?.role === 'player' && !roomState.hostConnected;
+  elements.hostRecovery.hidden = !visible;
+  if (!visible) return;
+  const remaining = recovery?.availableAt ? Math.max(0, Math.ceil((recovery.availableAt - Date.now()) / 1000)) : 0;
+  const canRecover = recovery?.eligible && remaining === 0;
+  const html = `<strong>Host disconnected.</strong> ${canRecover ? 'You can keep this game going.' : 'Waiting for the host to reconnect.'}
+    ${recovery?.eligible ? `<button class="button button-secondary" type="button" data-claim-host ${!canRecover ? 'disabled' : ''}>${canRecover ? 'Take over hosting' : `Hosting available in ${remaining}s`}</button>` : '<small>An existing player can take over if the host does not return.</small>'}`;
+  if (elements.hostRecovery.innerHTML !== html) elements.hostRecovery.innerHTML = html;
+  if (recovery?.eligible && remaining > 0) hostRecoveryTimer = window.setTimeout(renderHostRecovery, 1000);
+}
+
 function setConnectionState(isConnected) {
   if (sessionReplaced) isConnected = false;
   connected = isConnected;
   if (isConnected) hasConnected = true;
-  elements.connectionLabel.textContent = sessionReplaced
-    ? 'Room opened in another tab. Reload this page to take control here.'
-    : isConnected
-    ? ''
-    : hasConnected ? 'Connection lost. Reconnecting…' : 'Connecting…';
+  if (resuming) {
+    const message = !isConnected ? 'Connection lost. Waiting to restore your room…'
+      : resumeInFlight ? `Restoring room… (${resumeAttempts}/${RESUME_RETRY_DELAYS.length + 1})`
+      : resumeRetryTimer !== null ? 'Restoring room delayed. Retrying…'
+      : 'Room restore failed. Your saved seat is kept.';
+    const html = `<span>${message}</span><button class="connection-retry" type="button" data-retry-room ${!isConnected || resumeInFlight ? 'disabled' : ''}>Retry</button>`;
+    if (elements.connectionLabel.innerHTML !== html) elements.connectionLabel.innerHTML = html;
+  } else {
+    elements.connectionLabel.textContent = sessionReplaced
+      ? 'Room opened in another tab. Reload this page to take control here.'
+      : isConnected
+      ? ''
+      : hasConnected ? 'Connection lost. Reconnecting…' : 'Connecting…';
+  }
   elements.createRoomButton.disabled = !isConnected || resuming;
   elements.createCustomRoomButton.disabled = !isConnected || resuming;
   elements.joinRoomButton.disabled = !isConnected || resuming || joining;
@@ -379,6 +418,10 @@ function setConnectionState(isConnected) {
     button.disabled = !isConnected || resuming;
   });
   document.body.classList.toggle('is-offline', !isConnected);
+  document.body.classList.toggle('is-restoring', resuming);
+  elements.roomContent.inert = !isConnected || resuming;
+  elements.leaveRoomButton.disabled = !isConnected || resuming;
+  renderHostRecovery();
 }
 
 function request(eventName, payload = {}, { allowWhileResuming = false } = {}) {
@@ -437,19 +480,27 @@ function resetDrafts() {
   drafts.finalResponse = '';
 }
 
-async function resumeSavedSession(selectedSession = null) {
-  const session = selectedSession || savedSession();
-  if (!session?.code || !session?.token || resuming) return;
-  if (selectedSession) {
-    preferredGameId = selectedSession.preferredGameId || '';
-    preferredGameMode = selectedSession.preferredGameMode === 'quick' ? 'quick' : 'full';
-    saveSession(selectedSession);
-    shouldResumeOnConnect = true;
-  }
-  resuming = true;
+function stopSessionRestore() {
+  resumeGeneration += 1;
+  if (resumeRetryTimer !== null) window.clearTimeout(resumeRetryTimer);
+  resumeRetryTimer = null;
+  resumeInFlight = false;
+  resumeAttempts = 0;
+  resuming = false;
+}
+
+async function attemptSessionRestore(session, generation) {
+  const isCurrent = () => generation === resumeGeneration && connected && !sessionReplaced
+    && savedSession()?.code === session.code && savedSession()?.token === session.token;
+  if (!isCurrent()) return;
+  resumeRetryTimer = null;
+  resumeInFlight = true;
+  resumeAttempts += 1;
   setConnectionState(connected);
   try {
     const response = await request('room:resume', { code: session.code, token: session.token }, { allowWhileResuming: true });
+    if (!isCurrent()) return;
+    stopSessionRestore();
     roomState = response.state;
     preferredGameId = roomState.gameCatalog?.some((game) => game.id === session.preferredGameId)
       ? session.preferredGameId : '';
@@ -458,6 +509,8 @@ async function resumeSavedSession(selectedSession = null) {
     shouldResumeOnConnect = true;
     render();
   } catch (error) {
+    if (!isCurrent()) return;
+    resumeInFlight = false;
     const definitiveFailure = error.code === 'ROOM_NOT_FOUND' || error.code === 'SESSION_EXPIRED';
     if (definitiveFailure) {
       roomSessions.forget(session);
@@ -466,13 +519,28 @@ async function resumeSavedSession(selectedSession = null) {
       shouldResumeOnConnect = false;
       render();
     } else {
-      showToast(`${error.message} Your saved session was kept.`, 'error');
+      const delay = RESUME_RETRY_DELAYS[resumeAttempts - 1];
+      if (delay !== undefined) {
+        resumeRetryTimer = window.setTimeout(() => void attemptSessionRestore(session, generation), delay);
+      }
+      setConnectionState(connected);
     }
-  } finally {
-    resuming = false;
-    setConnectionState(connected);
-    if (!roomState) renderSavedRooms();
   }
+}
+
+async function resumeSavedSession(selectedSession = null) {
+  const session = selectedSession || savedSession();
+  if (!session?.code || !session?.token || resumeInFlight || sessionReplaced) return;
+  stopSessionRestore();
+  if (selectedSession) {
+    preferredGameId = selectedSession.preferredGameId || '';
+    preferredGameMode = selectedSession.preferredGameMode === 'quick' ? 'quick' : 'full';
+    saveSession(selectedSession);
+    shouldResumeOnConnect = true;
+  }
+  resuming = true;
+  setConnectionState(connected);
+  await attemptSessionRestore(session, resumeGeneration);
 }
 
 function preferredNetworkUrl() {
@@ -1281,6 +1349,7 @@ function renderFinalStandings() {
           </article>`;
         }).join('')}
       </div>
+      ${completed?.resultToken ? `<a class="result-link" href="/#result=${escapeAttr(completed.resultToken)}">Saved results &amp; private link</a>` : ''}
       ${completed ? `<p class="history-save-note">${historyStorageUnavailable ? 'This result could not be saved to your browser. Keep this page open to retain it.' : 'Saved to Past games in the lobby on this browser.'}</p>` : ''}
       ${roomState.role === 'host' ? '<button class="button button-gold button-large" type="button" data-action="return-lobby">Choose another game</button>' : '<p class="waiting-copy">The host can start another game from here.</p>'}
     </div>`;
@@ -1423,19 +1492,20 @@ function renderRoom() {
   elements.roomCodeButton.textContent = roomState.code;
   elements.leaveRoomButton.textContent = roomState.role === 'host' ? 'End room' : 'Leave';
 
-  const hostOfflineNotice = roomState.role === 'player' && !roomState.hostConnected
-    ? '<div class="host-offline-banner" role="status"><strong>Host disconnected.</strong> Buzzing is paused while their screen reconnects.</div>'
-    : '';
-
   if (roomState.phase === 'lobby') {
-    elements.roomContent.innerHTML = hostOfflineNotice + (roomState.role === 'host' ? renderHostLobby() : renderPlayerLobby());
+    elements.roomContent.innerHTML = (roomState.role === 'host' ? renderHostLobby() : renderPlayerLobby());
   } else if (roomState.phase === 'board') {
-    elements.roomContent.innerHTML = hostOfflineNotice + renderBoard();
+    elements.roomContent.innerHTML = renderBoard();
   } else if (roomState.phase === 'final') {
-    elements.roomContent.innerHTML = hostOfflineNotice + renderFinal();
+    elements.roomContent.innerHTML = renderFinal();
   }
   if (roomState.phase === 'board' && !roomState.currentClue) elements.roomContent.innerHTML += renderScoreUndo();
   elements.roomContent.innerHTML += renderRoomTools();
+  const hasHostRecovery = connected && !resuming && roomState.role === 'player'
+    && !roomState.hostConnected && roomState.hostRecovery?.eligible;
+  elements.roomContent.querySelectorAll('.clue-overlay, .custom-builder-overlay').forEach((overlay) => {
+    overlay.setAttribute('aria-modal', hasHostRecovery ? 'false' : 'true');
+  });
   const handoff = elements.roomContent.querySelector('details.host-handoff');
   if (handoff) handoff.open = Boolean(handoffOpen);
   const hostGameList = elements.roomContent.querySelector('.host-game-list');
@@ -1562,6 +1632,19 @@ elements.publicGameList.addEventListener('click', (event) => {
   if (!row || row.disabled) return;
   void createRoom(row.dataset.publicGameId);
 });
+elements.hostRecovery.addEventListener('click', (event) => {
+  if (!event.target.closest('[data-claim-host]') || !connected || resuming) return;
+  void runAction(() => request('player:claim-host'));
+});
+window.addEventListener('jeoparty:save-result', (event) => {
+  const result = completedGame(event.detail);
+  if (!result) return;
+  rememberCompletedGames({ completedGames: [result] });
+  renderGameHistory();
+  const status = document.querySelector('#saved-result-status');
+  status.textContent = historyStorageUnavailable ? 'Browser storage is unavailable. Keep the private link to recover this game.' : 'Saved to Past games on this browser.';
+});
+
 elements.historyList.addEventListener('click', (event) => {
   const button = event.target.closest('[data-replay-game-id]');
   if (!button || button.disabled || roomState) return;
@@ -1612,11 +1695,15 @@ elements.joinCode.addEventListener('input', () => {
 elements.joinName.addEventListener('input', clearJoinError);
 elements.roomCodeButton.addEventListener('click', () => void copyInvite());
 elements.leaveRoomButton.addEventListener('click', () => void leaveRoom());
+elements.connectionLabel.addEventListener('click', (event) => {
+  const retry = event.target.closest('[data-retry-room]');
+  if (retry && !retry.disabled && resuming) void resumeSavedSession();
+});
 
 function canBuzzWithKeyboard(event) {
   const target = event.target;
   if (target?.matches?.('input, textarea, select, button, summary, [contenteditable="true"]')) return false;
-  if (!connected || event.repeat || roomState?.phase !== 'board' || !roomState.currentClue || !roomState.you) return false;
+  if (!connected || resuming || event.repeat || roomState?.phase !== 'board' || !roomState.currentClue || !roomState.you) return false;
   const clue = roomState.currentClue;
   if (clue.dailyDouble || !clue.buzzOpen || clue.revealed) return false;
   if (roomState.role === 'player' && !roomState.hostConnected) return false;
@@ -1631,7 +1718,8 @@ document.addEventListener('keydown', (event) => {
 });
 
 document.addEventListener('keydown', (event) => {
-  if (event.key !== 'Tab') return;
+  if (roomState?.hostRecovery?.eligible && !roomState.hostConnected) return;
+  if (event.key !== 'Tab' || resuming || !connected) return;
   const overlay = elements.roomContent.querySelector('.clue-overlay, .custom-builder-overlay');
   if (!overlay) return;
   const focusable = [...overlay.querySelectorAll('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), summary, [tabindex]:not([tabindex="-1"])')]
@@ -1906,15 +1994,19 @@ socket.on('connect', () => {
 });
 
 socket.on('disconnect', () => {
+  stopSessionRestore();
+  if (!sessionReplaced && shouldResumeOnConnect && savedSession()) resuming = true;
   setConnectionState(false);
 });
 
 socket.on('room:state', (state) => {
+  if (!connected || sessionReplaced || !shouldResumeOnConnect) return;
+  const session = savedSession();
+  if (session && state.code !== session.code) return;
   const priorClue = roomState?.currentClue;
   const priorPhase = roomState?.phase;
   const priorGameId = roomState?.game?.id;
   roomState = state;
-  const session = savedSession();
   if (session) saveSession(session);
   if (!state.currentClue || state.currentClue.category !== priorClue?.category || state.currentClue.boardValue !== priorClue?.boardValue) {
     drafts.dailyPlayerId = '';
@@ -1929,6 +2021,8 @@ socket.on('room:state', (state) => {
 
 socket.on('room:error', ({ message }) => showToast(message, 'error'));
 socket.on('room:session', ({ session, state, message }) => {
+  if (!connected || sessionReplaced) return;
+  stopSessionRestore();
   if (session) {
     roomState = state;
     saveSession(session);
@@ -1962,6 +2056,7 @@ socket.on('room:removed', ({ message }) => {
 });
 
 socket.on('room:replaced', ({ message }) => {
+  stopSessionRestore();
   sessionReplaced = true;
   roomState = null;
   resetDrafts();

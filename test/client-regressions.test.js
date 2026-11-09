@@ -66,6 +66,7 @@ function storage() {
 
 function startClient(fetchResponse = () => new Promise(() => {}), {
   connectImmediately = true, search = '', localStore = storage(), sessionStore = storage(),
+  timers = { setTimeout: () => 1, clearTimeout() {} },
 } = {}) {
   const nodes = new Map();
   const operations = [];
@@ -95,6 +96,7 @@ function startClient(fetchResponse = () => new Promise(() => {}), {
       ...eventTarget(),
       location: { origin: 'http://127.0.0.1:3000', hostname: '127.0.0.1', search },
       scrollTo: (x, y) => scrollPositions.push([x, y]),
+      ...timers,
     },
     io: () => socket,
     RoomSessions: require('../room-sessions'),
@@ -288,6 +290,47 @@ test('finished games survive room closure and a new browser session without reta
   const saved = localStore.getItem('jeoparty_game_history_v1');
   assert.doesNotMatch(saved, /do-not-save|private response|token|response/);
   assert.equal(second.evaluate('savedSession()'), null);
+});
+
+test('private result links survive saving history and reopening the browser without retaining room credentials', () => {
+  const localStore = storage();
+  const resultToken = 'a'.repeat(43);
+  const result = completedResult({ resultToken, token: 'room-secret', response: 'private answer' });
+  const first = startClient(undefined, { localStore });
+  first.evaluate(`window.dispatch('jeoparty:save-result', { detail: ${JSON.stringify(result)} });`);
+  assert.match(first.node('#saved-result-status').textContent, /Saved to Past games/);
+  const second = startClient(undefined, { localStore });
+  const saved = JSON.parse(localStore.getItem('jeoparty_game_history_v1')).games;
+  assert.equal(saved[0].resultToken, resultToken);
+  assert.match(second.node('#history-list').innerHTML, new RegExp(`href="/#result=${resultToken}"`));
+  assert.doesNotMatch(JSON.stringify(saved), /room-secret|private answer/);
+  assert.equal(second.evaluate('savedSession()'), null);
+});
+
+test('legacy results accept a backfilled private link without losing later score corrections', () => {
+  const client = startClient();
+  const resultToken = 'b'.repeat(43);
+  const legacy = completedResult();
+  const linked = completedResult({ resultToken });
+  const corrected = completedResult({ revision: 2, players: [{ id: 'p_111111111111', name: 'Jordan', score: 1600 }] });
+  for (const result of [legacy, linked, corrected, linked]) {
+    client.evaluate(`rememberCompletedGames({ completedGames: [${JSON.stringify(result)}] });`);
+  }
+  client.evaluate('renderGameHistory();');
+  assert.equal(client.evaluate('readGameHistory().length'), 1);
+  assert.equal(client.evaluate('readGameHistory()[0].resultToken'), resultToken);
+  assert.equal(client.evaluate('readGameHistory()[0].revision'), 2);
+  assert.equal(client.evaluate('readGameHistory()[0].players[0].score'), 1600);
+  assert.match(client.node('#history-list').innerHTML, new RegExp(`href="/#result=${resultToken}"`));
+});
+
+test('invalid private result tokens are discarded without hiding the saved game', () => {
+  const client = startClient();
+  const result = completedResult({ resultToken: '\"><script>bad()</script>' });
+  client.evaluate(`rememberCompletedGames({ completedGames: [${JSON.stringify(result)}] }); renderGameHistory();`);
+  assert.equal(client.evaluate('readGameHistory()[0].resultToken'), undefined);
+  assert.match(client.node('#history-list').innerHTML, /Test episode/);
+  assert.doesNotMatch(client.node('#history-list').innerHTML, /#result=|<script>/);
 });
 
 test('repeated results deduplicate by play, and the same episode can have separate games', () => {
@@ -982,11 +1025,91 @@ test('Final response drafts survive a presence update without suppressing the re
   content.dispatch('input', { target: input });
   client.emit('room:state', { ...state, hostConnected: false });
 
-  assert.match(content.innerHTML, /Host disconnected/);
+  assert.equal(client.node('#host-recovery-status').hidden, false);
+  assert.match(client.node('#host-recovery-status').innerHTML, /Host disconnected/);
   assert.match(content.innerHTML, /value="What is helium\?"/);
   assert.equal(focused, true);
   assert.deepEqual(selections, [[8, 14]]);
   assert.deepEqual(client.scrollPositions, [[0, 0]], 'typing and presence updates must preserve page position');
+});
+
+test('host recovery stays available outside an active clue and unlocks when its grace period ends', async () => {
+  const timers = new Map();
+  let nextTimer = 0;
+  const client = startClient(undefined, {
+    timers: {
+      setTimeout(callback) {
+        const id = ++nextTimer;
+        timers.set(id, callback);
+        return id;
+      },
+      clearTimeout: (id) => timers.delete(id),
+    },
+  });
+  const manager = new RoomManager({ games: loadGames(), now: () => 100000 });
+  const session = manager.createRoom('host');
+  manager.joinRoom('player', { code: session.code, name: 'Alex' });
+  manager.startGame('host', 'game-01');
+  manager.openClue('host', { categoryIndex: 0, clueIndex: 1 });
+  manager.disconnect('host');
+  const state = manager.stateFor('player', []);
+  const content = client.node('#room-content');
+  const overlayAttributes = new Map();
+  const overlay = { setAttribute: (name, value) => overlayAttributes.set(name, value) };
+  content.querySelectorAll = (selector) => selector === '.clue-overlay, .custom-builder-overlay' ? [overlay] : [];
+  client.evaluate('Date.now = () => 100000;');
+  client.emit('room:state', state);
+  const banner = client.node('#host-recovery-status');
+  assert.match(content.innerHTML, /class="clue-overlay\b/);
+  assert.doesNotMatch(content.innerHTML, /data-claim-host/);
+  assert.equal(banner.hidden, false);
+  assert.equal(overlayAttributes.get('aria-modal'), 'false', 'assistive technology must be able to reach recovery outside the clue');
+  assert.match(banner.innerHTML, /data-claim-host disabled/);
+  assert.match(banner.innerHTML, /Hosting available in 60s/);
+  assert.equal(timers.size, 1);
+  client.evaluate('render();');
+  assert.equal(timers.size, 1, 'presence renders replace the existing countdown timer');
+
+  content.querySelector = () => ({ querySelectorAll: () => [] });
+  let prevented = false;
+  client.document.dispatch('keydown', { key: 'Tab', preventDefault() { prevented = true; } });
+  assert.equal(prevented, false, 'the clue must not trap focus away from host recovery');
+  content.querySelector = () => null;
+
+  client.evaluate(`Date.now = () => ${state.hostRecovery.availableAt};`);
+  [...timers.values()][0]();
+  assert.equal(timers.size, 0);
+  assert.match(banner.innerHTML, /Take over hosting/);
+  assert.doesNotMatch(banner.innerHTML, /data-claim-host disabled/);
+  client.evaluate('var claimEvent; request = async (event) => { claimEvent = event; return { ok: true }; };');
+  banner.dispatch('click', { target: { closest: () => ({ dataset: { claimHost: '' } }) } });
+  await flushAsync();
+  assert.equal(client.evaluate('claimEvent'), 'player:claim-host');
+
+  client.emit('room:state', { ...state, hostConnected: true });
+  assert.equal(banner.hidden, true);
+  assert.equal(overlayAttributes.get('aria-modal'), 'true');
+  assert.equal(timers.size, 0);
+});
+
+test('host recovery countdown stops when the player disconnects or must restore their seat', () => {
+  const timers = new Map();
+  const client = startClient(undefined, {
+    timers: { setTimeout: (callback) => { timers.set(1, callback); return 1; }, clearTimeout: (id) => timers.delete(id) },
+  });
+  const manager = new RoomManager({ games: loadGames(), now: () => 100000 });
+  const host = manager.createRoom('host');
+  const player = manager.joinRoom('player', { code: host.code, name: 'Alex' });
+  manager.disconnect('host');
+  client.evaluate(`Date.now = () => 100000; saveSession(${JSON.stringify(player)}); request = () => new Promise(() => {});`);
+  client.emit('room:state', manager.stateFor('player', []));
+  assert.equal(timers.size, 1);
+  client.emit('disconnect');
+  assert.equal(client.node('#host-recovery-status').hidden, true);
+  assert.equal(timers.size, 0);
+  client.emit('connect');
+  assert.equal(client.node('#host-recovery-status').hidden, true);
+  assert.equal(timers.size, 0);
 });
 
 test('creator can opt in, buzz privately, and transfer the playable board to a remote contestant', () => {

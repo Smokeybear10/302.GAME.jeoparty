@@ -11,16 +11,19 @@
     <title>Jeoparty!</title>
     <link rel="stylesheet" href="/style.css" />
     <link rel="stylesheet" href="/ui.css" />
+    <link rel="stylesheet" href="/results.css" />
     <link rel="stylesheet" href="/site-header.css" />
     <script src="/socket.io/socket.io.js" defer></script>
     <script src="/room-sessions.js" defer></script>
     <script src="/app.js" defer></script>
+    <script src="/result-view.js" defer></script>
   </head>
   <body>
     <div class="signal-bar" aria-live="polite">
       <span class="signal-mark" aria-hidden="true"></span>
       <span id="connection-label">Connecting…</span>
     </div>
+    <div id="host-recovery-status" class="host-offline-banner" role="status" hidden></div>
     <main id="app">
       <section class="landing" id="landing-screen">
         <header class="site-header">
@@ -207,5 +210,18 @@
     <noscript
       ><div class="noscript">JavaScript is required to play.</div></noscript
     >
+    <dialog id="saved-result-dialog" class="saved-result-dialog" aria-labelledby="saved-result-title">
+      <header><h2 id="saved-result-title">Saved game</h2><button id="close-saved-result" class="button button-ghost" type="button">Close</button></header>
+      <p id="saved-result-status" role="status"></p>
+      <ol id="saved-result-scores" aria-label="Final scores"></ol>
+      <label for="saved-result-link">Private results link</label>
+      <input id="saved-result-link" type="text" readonly />
+      <p>Keep this link to open the results on another device. Anyone with the link can see these names and scores.</p>
+      <div class="saved-result-actions">
+        <button id="copy-result-link" class="button button-secondary" type="button">Copy link</button>
+        <button id="save-result-locally" class="button button-secondary" type="button" disabled>Save to Past games</button>
+        <button id="retry-saved-result" class="button button-secondary" type="button" hidden>Try again</button>
+      </div>
+    </dialog>
   </body>
 </html>
